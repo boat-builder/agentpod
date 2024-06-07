@@ -1,14 +1,26 @@
 [tool.poetry]
 name = "agentpod"
 version = "0.1.0"
-description = ""
+description = "A simple framework for agentic systems"
 authors = ["Boat Builder <hello@boatbuilder.dev>"]
 readme = "README.md"
+license = "MIT"
+homepage = "https://agentpod.ai"
+repository = "https://github.com/boat-builder/agentpod"
+documentation = "https://github.com/boat-builder/agentpod"
+issue-tracker = "https://github.com/boat-builder/agentpod/issues"
 
 [tool.poetry.dependencies]
 python = "^3.11"
 
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.classifiers]
+Development Status :: 4 - Beta
+Intended Audience :: Developers
+License :: OSI Approved :: MIT License
+Programming Language :: Python :: 3.11
+Topic :: Software Development :: Libraries
+Topic :: Scientific/Engineering :: Artificial Intelligence
