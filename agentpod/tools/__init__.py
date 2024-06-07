@@ -1,0 +1,1 @@
+from .brave import BraveSearch
