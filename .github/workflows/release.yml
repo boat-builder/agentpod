@@ -19,12 +19,10 @@ jobs:
       uses: actions/setup-python@v2
       with:
         python-version: '3.11'
-
-    - name: Update version in pyproject.toml
+    - name: Update version in pyproject.toml and display file content
       run: |
-        # VERSION_TAG=${GITHUB_REF#refs/tags/}
-        # sed -i "s/^version = .*/version = \"$VERSION_TAG\"/" pyproject.toml
         sed -i "s/^version = .*/version = \"0.1.1\"/" pyproject.toml
+        cat pyproject.toml
 
     - name: Install dependencies
       run: |
