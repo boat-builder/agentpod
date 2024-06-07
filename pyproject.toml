@@ -8,7 +8,6 @@ license = "MIT"
 homepage = "https://agentpod.ai"
 repository = "https://github.com/boat-builder/agentpod"
 documentation = "https://github.com/boat-builder/agentpod"
-issue-tracker = "https://github.com/boat-builder/agentpod/issues"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

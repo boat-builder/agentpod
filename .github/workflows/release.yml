@@ -22,7 +22,6 @@ jobs:
     - name: Update version in pyproject.toml and display file content
       run: |
         sed -i "s/^version = .*/version = \"0.1.1\"/" pyproject.toml
-        cat pyproject.toml
 
     - name: Install dependencies
       run: |
