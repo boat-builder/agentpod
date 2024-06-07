@@ -9,6 +9,14 @@ homepage = "https://agentpod.ai"
 repository = "https://github.com/boat-builder/agentpod"
 documentation = "https://github.com/boat-builder/agentpod"
 issue-tracker = "https://github.com/boat-builder/agentpod/issues"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence"
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -16,11 +24,3 @@ python = "^3.11"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.classifiers]
-Development Status :: 4 - Beta
-Intended Audience :: Developers
-License :: OSI Approved :: MIT License
-Programming Language :: Python :: 3.11
-Topic :: Software Development :: Libraries
-Topic :: Scientific/Engineering :: Artificial Intelligence
