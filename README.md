@@ -15,6 +15,11 @@ pip install agentpod
 ## Usage
 
 ```python
+import asyncio
+from pydantic import BaseModel, Field
+from agentpod import AsyncClient, Message, LLMMeta
+
+
 client = AsyncClient(model=LLMMeta.GPT_3_5_TURBO_0125)
 sample_messages = [
     Message(
@@ -40,7 +45,7 @@ async def stream_example():
         astream = client.stream(sample_messages, output_type=Distance, partial=True, max_retries=2)
         async for response in astream:
             print(response)
-        print(tracker)
+            print(tracker)
 
 async def invoke_example():
     async with client.usage_tracker as tracker:
