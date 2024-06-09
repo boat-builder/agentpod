@@ -6,9 +6,9 @@ from typing import AsyncGenerator, Literal, Optional, Type, Union
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
-from .structured.custom_async_openai import CustomAsyncOpenAI
-from .structured.mode import Mode
-from .structured.patch import patch
+from agentpod.client.structured.custom_async_openai import CustomAsyncOpenAI
+from agentpod.client.structured.mode import Mode
+from agentpod.client.structured.patch import patch
 
 
 class Message(BaseModel):
@@ -81,7 +81,9 @@ class LLMUsageTracker:
         input_cost_per_token = model_costs["input"] / 1_000_000
         output_cost_per_token = model_costs["output"] / 1_000_000
 
-        self.total_cost += (usage.prompt_tokens * input_cost_per_token) + (usage.completion_tokens * output_cost_per_token)
+        self.total_cost += (usage.prompt_tokens * input_cost_per_token) + (
+            usage.completion_tokens * output_cost_per_token
+        )
 
     def reset(self):
         self.completion_tokens = 0
@@ -90,7 +92,11 @@ class LLMUsageTracker:
         self.total_cost = 0.0
 
     def __repr__(self):
-        return f"UsageTracker(completion_tokens={self.completion_tokens}, " f"prompt_tokens={self.prompt_tokens}, total_tokens={self.total_tokens}, " f"total_cost={self.total_cost:.6f})"
+        return (
+            f"UsageTracker(completion_tokens={self.completion_tokens}, "
+            f"prompt_tokens={self.prompt_tokens}, total_tokens={self.total_tokens}, "
+            f"total_cost={self.total_cost:.6f})"
+        )
 
 
 class AsyncClient:
@@ -106,7 +112,9 @@ class AsyncClient:
 
         api_key = api_key or os.getenv("OPENAI_API_KEY") or ""
         if not api_key:
-            raise ValueError("API key must be provided either as an argument or through the OPENAI_API_KEY environment variable.")
+            raise ValueError(
+                "API key must be provided either as an argument or through the OPENAI_API_KEY environment variable."
+            )
 
         self._native_client = AsyncOpenAI(api_key=api_key)
         self._structured_client = CustomAsyncOpenAI(
@@ -127,19 +135,23 @@ class AsyncClient:
         self.usage_tracker = LLMUsageTracker()  # Initialize the usage tracker here
 
     async def invoke(
-        self,
-        messages: list[Message],
-        output_type: Optional[Type[BaseModel]] = None,
+        self, messages: list[Message], output_type: Optional[Type[BaseModel]] = None, max_retries: Optional[int] = 3
     ) -> Message | BaseModel:
         if output_type:
-            response, original = await self._structured_client.chat.completions.create(
+            response = await self._structured_client.chat.completions.create(
                 model=self.model.value,
                 messages=[message.to_dict() for message in messages],
                 response_model=output_type,
                 stream=False,
+                raw_processor_fn=lambda original: (
+                    (
+                        self.usage_tracker.update(original.usage, self.provider, self.model)
+                        if original.usage and self.usage_tracker.active
+                        else None
+                    ),
+                ),
+                max_retries=max_retries,
             )
-            if original.usage and self.usage_tracker.active:
-                self.usage_tracker.update(original.usage, self.provider, self.model)
             return response
         else:
             response = await self._native_client.chat.completions.create(
@@ -158,16 +170,12 @@ class AsyncClient:
         self,
         messages: list[Message],
         output_type: Optional[Type[BaseModel]] = None,
+        partial: Optional[bool] = False,
+        max_retries: Optional[int] = 3,
     ) -> AsyncGenerator[Message, None]:
         if output_type:
-            response = await self._structured_client.chat.completions.create(
-                model=self.model.value,
-                messages=[message.to_dict() for message in messages],
-                response_model=output_type,
-                stream=True,
-            )
-            print(response)
-            yield 1
+            # TODO use max retries and partial. For partial, create a structured.Partial type and pass it. Rest is handled internally
+            raise NotImplementedError
         else:
             response = await self._native_client.chat.completions.create(
                 model=self.model.value,
@@ -224,4 +232,4 @@ if __name__ == "__main__":
             print(tracker)
 
     asyncio.run(invoke_example())
-    asyncio.run(stream_example())
+    # asyncio.run(stream_example())

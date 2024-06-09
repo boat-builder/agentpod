@@ -4,7 +4,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-from collections.abc import Generator, Iterable
+from collections.abc import Iterable
 from textwrap import dedent
 from typing import Any, TypeVar, get_args, get_origin
 
@@ -18,7 +18,7 @@ from .dsl.partial import PartialBase
 from .dsl.simple_type import AdapterBase, ModelAdapter, is_simple_type
 from .function_calls import OpenAISchema, openai_schema
 from .mode import Mode
-from .utils import merge_consecutive_messages, transform_to_gemini_prompt
+from .utils import merge_consecutive_messages
 
 logger = logging.getLogger("instructor")
 
@@ -35,6 +35,7 @@ async def process_response_async(
     stream: bool = False,
     validation_context: dict[str, Any] | None = None,
     strict: bool | None = None,
+    raw_processor_fn: Callable | None = None,
     mode: Mode = Mode.TOOLS,
 ) -> T_Model | ChatCompletion:
     """Processes a OpenAI response with the response model, if available.
@@ -66,6 +67,7 @@ async def process_response_async(
         response,
         validation_context=validation_context,
         strict=strict,
+        raw_processor_fn=raw_processor_fn,
         mode=mode,
     )
 
@@ -87,70 +89,9 @@ async def process_response_async(
     return model
 
 
-def process_response(
-    response: T_Model,
-    *,
-    response_model: type[OpenAISchema | BaseModel],
-    stream: bool,
-    validation_context: dict | None = None,
-    strict=None,
-    mode: Mode = Mode.TOOLS,
-) -> T_Model | Generator[T_Model, None, None] | ChatCompletion:
-    """Processes a OpenAI response with the response model, if available.
-
-    Args:
-        response (T): The response from OpenAI's API
-        response_model (Type[T_Model]): The response model to use for parsing the response
-        stream (bool): Whether the response is a stream
-        validation_context (dict, optional): The validation context to use for validating the response. Defaults to None.
-        strict (_type_, optional): Whether to use strict json parsing. Defaults to None.
-        mode (Mode, optional): The openai completion mode. Defaults to Mode.FUNCTIONS.
-
-    Returns:
-        Union[T_Model, T]: The parsed response, if a response model is available, otherwise the response as is from the SDK
-    """
-
-    logger.debug(
-        f"Instructor Raw Response: {response}",
-    )
-
-    if response_model is None:
-        logger.debug("No response model, returning response as is")
-        return response
-
-    if inspect.isclass(response_model) and issubclass(response_model, (IterableBase, PartialBase)) and stream:
-        model = response_model.from_streaming_response(
-            response,
-            mode=mode,
-        )
-        return model
-
-    model = response_model.from_response(
-        response,
-        validation_context=validation_context,
-        strict=strict,
-        mode=mode,
-    )
-
-    # ? This really hints at the fact that we need a better way of
-    # ? attaching usage data and the raw response to the model we return.
-    if isinstance(model, IterableBase):
-        logger.debug(f"Returning takes from IterableBase")
-        return [task for task in model.tasks]
-
-    if isinstance(response_model, ParallelBase):
-        logger.debug(f"Returning model from ParallelBase")
-        return model
-
-    if isinstance(model, AdapterBase):
-        logger.debug(f"Returning model from AdapterBase")
-        return model.content
-
-    model._raw_response = response
-    return model
-
-
-def handle_response_model(response_model: type[T] | None, mode: Mode = Mode.TOOLS, **kwargs: Any) -> tuple[type[T], dict[str, Any]]:
+def handle_response_model(
+    response_model: type[T] | None, mode: Mode = Mode.TOOLS, **kwargs: Any
+) -> tuple[type[T], dict[str, Any]]:
     """Prepare the response model type hint, and returns the response_model
     along with the new modified kwargs needed to be able to use the response_model
     parameter with the patch function.
@@ -177,7 +118,9 @@ def handle_response_model(response_model: type[T] | None, mode: Mode = Mode.TOOL
 
         # This a special case for parallel tools
         if mode == Mode.PARALLEL_TOOLS:
-            assert new_kwargs.get("stream", False) is False, "stream=True is not supported when using PARALLEL_TOOLS mode"
+            assert (
+                new_kwargs.get("stream", False) is False
+            ), "stream=True is not supported when using PARALLEL_TOOLS mode"
             new_kwargs["tools"] = handle_parallel_model(response_model)
             new_kwargs["tool_choice"] = "auto"
 
@@ -193,7 +136,9 @@ def handle_response_model(response_model: type[T] | None, mode: Mode = Mode.TOOL
             response_model = openai_schema(response_model)  # type: ignore
 
         if new_kwargs.get("stream", False) and not issubclass(response_model, (IterableBase, PartialBase)):
-            raise NotImplementedError("stream=True is not supported when using response_model parameter for non-iterables")
+            raise NotImplementedError(
+                "stream=True is not supported when using response_model parameter for non-iterables"
+            )
 
         if mode == Mode.FUNCTIONS:
             new_kwargs["functions"] = [response_model.openai_schema]  # type: ignore
@@ -272,7 +217,9 @@ def handle_response_model(response_model: type[T] | None, mode: Mode = Mode.TOOL
 
         elif mode == Mode.ANTHROPIC_JSON:
             # anthropic wants system message to be a string so we first extract out any system message
-            openai_system_messages = [message["content"] for message in new_kwargs.get("messages", []) if message["role"] == "system"]
+            openai_system_messages = [
+                message["content"] for message in new_kwargs.get("messages", []) if message["role"] == "system"
+            ]
 
             new_kwargs["system"] = new_kwargs.get("system", "") + "\n\n" + "\n\n".join(openai_system_messages)
 
@@ -287,7 +234,9 @@ def handle_response_model(response_model: type[T] | None, mode: Mode = Mode.TOOL
             """
             new_kwargs["system"] = dedent(new_kwargs["system"])
 
-            new_kwargs["messages"] = [message for message in new_kwargs.get("messages", []) if message["role"] != "system"]
+            new_kwargs["messages"] = [
+                message for message in new_kwargs.get("messages", []) if message["role"] != "system"
+            ]
 
             # the messages array must be alternating roles of user and assistant, we must merge
             # consecutive user messages into a single message
@@ -317,7 +266,9 @@ The output must be a valid JSON object that `{response_model.__name__}.model_val
             new_kwargs["message"] = instruction
             new_kwargs["chat_history"] = chat_history
         elif mode == Mode.GEMINI_JSON:
-            assert "model" not in new_kwargs, "Gemini `model` must be set while patching the client, not passed as a parameter to the create method"
+            assert (
+                "model" not in new_kwargs
+            ), "Gemini `model` must be set while patching the client, not passed as a parameter to the create method"
             message = dedent(
                 f"""
                 As a genius expert, your task is to understand the content and provide
@@ -343,7 +294,9 @@ The output must be a valid JSON object that `{response_model.__name__}.model_val
                 new_kwargs["messages"][0]["content"] += f"\n\n{message}"
 
             # default to json response type
-            new_kwargs["generation_config"] = new_kwargs.get("generation_config", {}) | {"response_mime_type": "application/json"}
+            new_kwargs["generation_config"] = new_kwargs.get("generation_config", {}) | {
+                "response_mime_type": "application/json"
+            }
 
             map_openai_args_to_gemini = {
                 "max_tokens": "max_output_tokens",
@@ -378,7 +331,11 @@ The output must be a valid JSON object that `{response_model.__name__}.model_val
         f"Instructor Request: {mode.value=}, {response_model=}, {new_kwargs=}",
         extra={
             "mode": mode.value,
-            "response_model": (response_model.__name__ if response_model is not None and hasattr(response_model, "__name__") else str(response_model)),
+            "response_model": (
+                response_model.__name__
+                if response_model is not None and hasattr(response_model, "__name__")
+                else str(response_model)
+            ),
             "new_kwargs": new_kwargs,
         },
     )

@@ -56,6 +56,7 @@ class CustomAsyncOpenAI:
         max_retries: int = 3,
         validation_context: dict[str, Any] | None = None,
         strict: bool = True,
+        raw_processor_fn: Callable | None = None,
         **kwargs: Any,
     ) -> T:
         kwargs = self.handle_kwargs(kwargs)
@@ -65,5 +66,6 @@ class CustomAsyncOpenAI:
             max_retries=max_retries,
             messages=messages,
             strict=strict,
+            raw_processor_fn=raw_processor_fn,
             **kwargs,
         )

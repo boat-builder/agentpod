@@ -13,7 +13,7 @@ from typing_extensions import ParamSpec
 
 from .exceptions import InstructorRetryException
 from .mode import Mode
-from .process_response import process_response, process_response_async
+from .process_response import process_response_async
 from .utils import dump_message, merge_consecutive_messages, update_total_usage
 
 logger = logging.getLogger("instructor")
@@ -32,7 +32,11 @@ def reask_messages(response: ChatCompletion, mode: Mode, exception: Exception):
         for content in response.content:
             assistant_content.append(content.model_dump())
             # Assuming exception from single tool invocation
-            if content.type == "tool_use" and isinstance(exception, ValidationError) and content.name == exception.title:
+            if (
+                content.type == "tool_use"
+                and isinstance(exception, ValidationError)
+                and content.name == exception.title
+            ):
                 tool_use_id = content.id
 
         yield {
@@ -75,7 +79,9 @@ def reask_messages(response: ChatCompletion, mode: Mode, exception: Exception):
     if mode == Mode.GEMINI_JSON:
         yield {
             "role": "user",
-            "parts": [f"Correct the following JSON response, based on the errors given below:\n\nJSON:\n{response.text}\n\nExceptions:\n{exception}"],
+            "parts": [
+                f"Correct the following JSON response, based on the errors given below:\n\nJSON:\n{response.text}\n\nExceptions:\n{exception}"
+            ],
         }
         return
 
@@ -101,72 +107,6 @@ def reask_messages(response: ChatCompletion, mode: Mode, exception: Exception):
         }
 
 
-def retry_sync(
-    func: Callable[T_ParamSpec, T_Retval],
-    response_model: type[T_Model],
-    validation_context: dict,
-    args,
-    kwargs,
-    max_retries: int | Retrying = 1,
-    strict: bool | None = None,
-    mode: Mode = Mode.TOOLS,
-) -> T_Model:
-    total_usage = CompletionUsage(completion_tokens=0, prompt_tokens=0, total_tokens=0)
-    if mode in {Mode.ANTHROPIC_TOOLS, Mode.ANTHROPIC_JSON}:
-        from anthropic.types import Usage as AnthropicUsage
-
-        total_usage = AnthropicUsage(input_tokens=0, output_tokens=0)
-
-    # If max_retries is int, then create a Retrying object
-    if isinstance(max_retries, int):
-        logger.debug(f"max_retries: {max_retries}")
-        max_retries = Retrying(
-            stop=stop_after_attempt(max_retries),
-            reraise=True,
-        )
-    if not isinstance(max_retries, (Retrying, AsyncRetrying)):
-        raise ValueError("max_retries must be an int or a `tenacity.Retrying` object")
-
-    try:
-        for attempt in max_retries:
-            with attempt:
-                try:
-                    response = func(*args, **kwargs)
-                    stream = kwargs.get("stream", False)
-                    response = update_total_usage(response, total_usage)
-                    return process_response(
-                        response,
-                        response_model=response_model,
-                        stream=stream,
-                        validation_context=validation_context,
-                        strict=strict,
-                        mode=mode,
-                    )
-                except (ValidationError, JSONDecodeError) as e:
-                    logger.debug(f"Error response: {response}")
-                    if mode in {Mode.GEMINI_JSON}:
-                        kwargs["contents"].extend(reask_messages(response, mode, e))
-                    else:
-                        kwargs["messages"].extend(reask_messages(response, mode, e))
-                    if mode in {Mode.ANTHROPIC_TOOLS, Mode.ANTHROPIC_JSON}:
-                        kwargs["messages"] = merge_consecutive_messages(kwargs["messages"])
-                    raise InstructorRetryException(
-                        e,
-                        last_completion=response,
-                        n_attempts=attempt.retry_state.attempt_number,
-                        messages=kwargs.get("messages", kwargs.get("contents")),
-                        total_usage=total_usage,
-                    ) from e
-    except RetryError as e:
-        raise InstructorRetryException(
-            e,
-            last_completion=response,
-            n_attempts=attempt.retry_state.attempt_number,
-            messages=kwargs.get("messages", kwargs.get("contents")),
-            total_usage=total_usage,
-        ) from e
-
-
 async def retry_async(
     func: Callable[T_ParamSpec, T_Retval],
     response_model: type[T] | None,
@@ -174,15 +114,10 @@ async def retry_async(
     args: Any,
     kwargs: Any,
     max_retries: int | AsyncRetrying = 1,
+    raw_processor_fn: Callable | None = None,
     strict: bool | None = None,
     mode: Mode = Mode.TOOLS,
 ) -> T:
-    total_usage = CompletionUsage(completion_tokens=0, prompt_tokens=0, total_tokens=0)
-    if mode in {Mode.ANTHROPIC_TOOLS, Mode.ANTHROPIC_JSON}:
-        from anthropic.types import Usage as AnthropicUsage
-
-        total_usage = AnthropicUsage(input_tokens=0, output_tokens=0)
-
     # If max_retries is int, then create a AsyncRetrying object
     if isinstance(max_retries, int):
         logger.debug(f"max_retries: {max_retries}")
@@ -200,13 +135,13 @@ async def retry_async(
                 try:
                     response: ChatCompletion = await func(*args, **kwargs)
                     stream = kwargs.get("stream", False)
-                    response = update_total_usage(response, total_usage)
                     return await process_response_async(
                         response,
                         response_model=response_model,
                         stream=stream,
                         validation_context=validation_context,
                         strict=strict,
+                        raw_processor_fn=raw_processor_fn,
                         mode=mode,
                     )
                 except (ValidationError, JSONDecodeError) as e:
