@@ -3,9 +3,12 @@ import os
 from enum import Enum
 from typing import AsyncGenerator, Literal, Optional, Type, Union
 
-import instructor
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+
+from .structured.custom_async_openai import CustomAsyncOpenAI
+from .structured.mode import Mode
+from .structured.patch import patch
 
 
 class Message(BaseModel):
@@ -90,12 +93,12 @@ class LLMUsageTracker:
         return f"UsageTracker(completion_tokens={self.completion_tokens}, " f"prompt_tokens={self.prompt_tokens}, total_tokens={self.total_tokens}, " f"total_cost={self.total_cost:.6f})"
 
 
-class LLMClient:
+class AsyncClient:
     def __init__(
         self,
         api_key: Optional[str] = "",
         provider: Optional[str] = "openai",
-        model: Union[str, LLMMeta] = LLMMeta.GPT_4O,
+        model: Union[str, LLMMeta] = LLMMeta.GPT_3_5_TURBO_INSTRUCT,
     ):
         if provider.lower() != "openai":
             raise ValueError("Currently, only 'openai' provider is supported.")
@@ -105,8 +108,13 @@ class LLMClient:
         if not api_key:
             raise ValueError("API key must be provided either as an argument or through the OPENAI_API_KEY environment variable.")
 
-        self._instructor_client = instructor.from_openai(AsyncOpenAI(api_key=api_key))
         self._native_client = AsyncOpenAI(api_key=api_key)
+        self._structured_client = CustomAsyncOpenAI(
+            client=self._native_client,
+            create=patch(create=self._native_client.chat.completions.create, mode=Mode.TOOLS),
+            mode=Mode.TOOLS,
+            provider=provider,
+        )
 
         if isinstance(model, str):
             try:
@@ -118,13 +126,13 @@ class LLMClient:
 
         self.usage_tracker = LLMUsageTracker()  # Initialize the usage tracker here
 
-    async def ainvoke(
+    async def invoke(
         self,
         messages: list[Message],
         output_type: Optional[Type[BaseModel]] = None,
     ) -> Message | BaseModel:
         if output_type:
-            response, original = await self._instructor_client.chat.completions.create_with_completion(
+            response, original = await self._structured_client.chat.completions.create(
                 model=self.model.value,
                 messages=[message.to_dict() for message in messages],
                 response_model=output_type,
@@ -146,13 +154,13 @@ class LLMClient:
             choice = response.choices[0]
             return Message(role=choice.message.role, content=choice.message.content)
 
-    async def astream(
+    async def stream(
         self,
         messages: list[Message],
         output_type: Optional[Type[BaseModel]] = None,
     ) -> AsyncGenerator[Message, None]:
         if output_type:
-            response = await self._instructor_client.chat.completions.create_with_completion(
+            response = await self._structured_client.chat.completions.create(
                 model=self.model.value,
                 messages=[message.to_dict() for message in messages],
                 response_model=output_type,
@@ -182,7 +190,7 @@ class LLMClient:
 
 
 if __name__ == "__main__":
-    llm = LLMClient(model=LLMMeta.GPT_3_5_TURBO_0125)
+    client = AsyncClient(model=LLMMeta.GPT_3_5_TURBO_0125)
     sample_messages = [
         Message(
             role="system",
@@ -202,17 +210,18 @@ if __name__ == "__main__":
             description="Distance in miles between two points",
         )
 
-    async def astream_example():
-        async with llm.usage_tracker as tracker:
-            astream = llm.astream(sample_messages, output_type=Distance)
+    async def stream_example():
+        async with client.usage_tracker as tracker:
+            astream = client.stream(sample_messages, output_type=Distance, partial=True, max_retries=2)
             async for response in astream:
                 print(response)
-        print(tracker)
+            print(tracker)
 
-    async def ainvoke_example():
-        async with llm.usage_tracker as tracker:
-            response = await llm.ainvoke(sample_messages, output_type=Distance)
+    async def invoke_example():
+        async with client.usage_tracker as tracker:
+            response = await client.invoke(sample_messages, output_type=Distance, max_retries=2)
             print(response)
-        print(tracker)
+            print(tracker)
 
-    asyncio.run(ainvoke_example())
+    asyncio.run(invoke_example())
+    asyncio.run(stream_example())

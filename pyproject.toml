@@ -19,11 +19,11 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
-brave-search = "^0.2.0"
 loguru = "^0.7.2"
 openai = "^1.32.0"
-instructor = "^1.3.2"
 pydantic = "^2.7.3"
+tenacity = "^8.3.0"
+docstring-parser = "^0.16"
 
 [build-system]
 requires = ["poetry-core"]
