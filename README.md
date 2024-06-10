@@ -57,6 +57,10 @@ asyncio.run(invoke_example())
 asyncio.run(stream_example())
 ```
 
+## Examples
+
+More examples can be found at [examples/](examples/).
+
 ## Acknowledgements
 
 This project includes code from [Instructor](https://github.com/jxnl/instructor), which is licensed under the MIT License.
