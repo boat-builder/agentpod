@@ -114,7 +114,6 @@ async def retry_async(
     args: Any,
     kwargs: Any,
     max_retries: int | AsyncRetrying = 1,
-    raw_processor_fn: Callable | None = None,
     strict: bool | None = None,
     mode: Mode = Mode.TOOLS,
 ) -> T:
@@ -135,15 +134,16 @@ async def retry_async(
                 try:
                     response: ChatCompletion = await func(*args, **kwargs)
                     stream = kwargs.get("stream", False)
-                    return await process_response_async(
+                    processed = await process_response_async(
                         response,
                         response_model=response_model,
                         stream=stream,
                         validation_context=validation_context,
                         strict=strict,
-                        raw_processor_fn=raw_processor_fn,
                         mode=mode,
                     )
+                    # my hack - always returning processed and original
+                    return processed, response
                 except (ValidationError, JSONDecodeError) as e:
                     logger.debug(f"Error response: {response}", e)
                     kwargs["messages"].extend(reask_messages(response, mode, e))

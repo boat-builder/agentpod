@@ -132,20 +132,15 @@ class AsyncClient:
         self, messages: list[Message], output_type: Optional[Type[BaseModel]] = None, max_retries: Optional[int] = 3
     ) -> Message | BaseModel:
         if output_type:
-            response = await self._structured_client.chat.completions.create(
+            response, original = await self._structured_client.create(
                 model=self.model.value,
                 messages=[message.to_dict() for message in messages],
                 response_model=output_type,
                 stream=False,
-                raw_processor_fn=lambda original: (
-                    (
-                        self._usage_tracker.update(original.usage, self.provider, self.model)
-                        if original.usage and self._usage_tracker
-                        else None
-                    ),
-                ),
                 max_retries=max_retries,
             )
+            if original.usage and self._usage_tracker:
+                await self._usage_tracker.update(original.usage, self.provider, self.model)
             return response
         else:
             response = await self._native_client.chat.completions.create(
@@ -154,7 +149,7 @@ class AsyncClient:
                 stream=False,
             )
             if response.usage and self._usage_tracker:
-                self._usage_tracker.update(response.usage, self.provider, self.model)
+                await self._usage_tracker.update(response.usage, self.provider, self.model)
 
             # Craft a Message response from the response variable
             choice = response.choices[0]
