@@ -61,9 +61,8 @@ class LLMUsageTracker:
     specifically designed for use with asyncio's event loop and does not provide protection
     against concurrent access from multiple threads.
 
-    The reference count (_ref_count) is used to track the number of active coroutines using
-    the tracker. This ensures that the tracker is only reset when all active coroutines have
-    finished their operations.
+    If you need to use the usage tracker in a different thread, create a new instance of your LLM Client and that comes with
+    a brand new LLMUsageTracker instance.
     """
 
     def __init__(self):
@@ -72,26 +71,32 @@ class LLMUsageTracker:
         self.total_tokens: int = 0
         self.total_cost: float = 0.0
         self._lock = asyncio.Lock()  # Add a lock for thread safety
-        self._ref_count = 0  # Reference count to track active coroutines
+        self._context_active = False  # Track if the context manager is active
 
     async def __aenter__(self):
         async with self._lock:
-            self._ref_count += 1
+            if self._context_active:
+                raise RuntimeError(
+                    "LLMUsageTracker context is already active. If you need to open the context manager in a different async thread, create a new LLMUsageTracker instance."
+                )
+            self._context_active = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         async with self._lock:
-            self._ref_count -= 1
-            if self._ref_count == 0:
-                self.reset()
+            self._reset()
+            self._context_active = False
 
     async def update(self, usage, provider: str, model: LLMMeta):
         if provider.lower() != "openai":
             raise ValueError("Currently, only 'openai' provider is supported.")
 
-        model_costs = LLMMeta.get_model_cost(model)
-
         async with self._lock:
+            if not self._context_active:
+                raise RuntimeError("LLMUsageTracker context is not active. Update operation is not allowed.")
+
+            model_costs = LLMMeta.get_model_cost(model)
+
             self.completion_tokens += usage.completion_tokens
             self.prompt_tokens += usage.prompt_tokens
             self.total_tokens += usage.total_tokens
@@ -103,7 +108,7 @@ class LLMUsageTracker:
                 usage.completion_tokens * output_cost_per_token
             )
 
-    def reset(self):
+    def _reset(self):
         self.completion_tokens = 0
         self.prompt_tokens = 0
         self.total_tokens = 0
