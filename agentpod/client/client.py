@@ -96,9 +96,10 @@ class LLMUsageTracker:
 class AsyncClient:
     def __init__(
         self,
-        api_key: Optional[str] = "",
-        provider: Optional[str] = "openai",
+        api_key: str = "",
+        provider: str = "openai",
         model: Union[str, LLMMeta] = LLMMeta.GPT_3_5_TURBO_INSTRUCT,
+        usage_tracker: LLMUsageTracker | None = None,
     ):
         if provider.lower() != "openai":
             raise ValueError("Currently, only 'openai' provider is supported.")
@@ -126,17 +127,7 @@ class AsyncClient:
         else:
             self.model = model
 
-        self._usage_tracker = None
-
-    @asynccontextmanager
-    async def usage_tracker(self):
-        if self._usage_tracker is not None:
-            raise RuntimeError(
-                "Usage Tracker context is already active. If you need it in a different async thread, create a new AsyncClient instance and use that."
-            )
-        self._usage_tracker = LLMUsageTracker()
-        yield self._usage_tracker
-        self._usage_tracker = None
+        self._usage_tracker = usage_tracker
 
     async def invoke(
         self, messages: list[Message], output_type: Optional[Type[BaseModel]] = None, max_retries: Optional[int] = 3
