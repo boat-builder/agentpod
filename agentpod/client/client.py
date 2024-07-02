@@ -53,37 +53,55 @@ class LLMMeta(Enum):
 
 
 class LLMUsageTracker:
+    """
+    A class to track the usage of LLM (Large Language Models) and calculate the associated costs.
+
+    This class is designed to be thread-safe for asynchronous operations using asyncio.Lock.
+    Note that it is not thread-safe for synchronous operations because asyncio.Lock is
+    specifically designed for use with asyncio's event loop and does not provide protection
+    against concurrent access from multiple threads.
+
+    The reference count (_ref_count) is used to track the number of active coroutines using
+    the tracker. This ensures that the tracker is only reset when all active coroutines have
+    finished their operations.
+    """
+
     def __init__(self):
         self.completion_tokens: int = 0
         self.prompt_tokens: int = 0
         self.total_tokens: int = 0
         self.total_cost: float = 0.0
-        self.active: bool = False
+        self._lock = asyncio.Lock()  # Add a lock for thread safety
+        self._ref_count = 0  # Reference count to track active coroutines
 
     async def __aenter__(self):
-        self.active = True
+        async with self._lock:
+            self._ref_count += 1
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self.reset()
-        self.active = False
+        async with self._lock:
+            self._ref_count -= 1
+            if self._ref_count == 0:
+                self.reset()
 
-    def update(self, usage, provider: str, model: LLMMeta):
+    async def update(self, usage, provider: str, model: LLMMeta):
         if provider.lower() != "openai":
             raise ValueError("Currently, only 'openai' provider is supported.")
 
         model_costs = LLMMeta.get_model_cost(model)
 
-        self.completion_tokens += usage.completion_tokens
-        self.prompt_tokens += usage.prompt_tokens
-        self.total_tokens += usage.total_tokens
+        async with self._lock:
+            self.completion_tokens += usage.completion_tokens
+            self.prompt_tokens += usage.prompt_tokens
+            self.total_tokens += usage.total_tokens
 
-        input_cost_per_token = model_costs["input"] / 1_000_000
-        output_cost_per_token = model_costs["output"] / 1_000_000
+            input_cost_per_token = model_costs["input"] / 1_000_000
+            output_cost_per_token = model_costs["output"] / 1_000_000
 
-        self.total_cost += (usage.prompt_tokens * input_cost_per_token) + (
-            usage.completion_tokens * output_cost_per_token
-        )
+            self.total_cost += (usage.prompt_tokens * input_cost_per_token) + (
+                usage.completion_tokens * output_cost_per_token
+            )
 
     def reset(self):
         self.completion_tokens = 0
