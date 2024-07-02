@@ -113,7 +113,6 @@ class AsyncClient:
         self._native_client = AsyncOpenAI(api_key=api_key)
         self._structured_client = CustomAsyncOpenAI(
             client=self._native_client,
-            create=patch(create=self._native_client.chat.completions.create, mode=Mode.TOOLS),
             mode=Mode.TOOLS,
             provider=provider,
         )
