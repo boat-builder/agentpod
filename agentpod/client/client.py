@@ -1,5 +1,6 @@
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from enum import Enum
 from typing import AsyncGenerator, Literal, Optional, Type, Union
 
@@ -60,9 +61,6 @@ class LLMUsageTracker:
     Note that it is not thread-safe for synchronous operations because asyncio.Lock is
     specifically designed for use with asyncio's event loop and does not provide protection
     against concurrent access from multiple threads.
-
-    If you need to use the usage tracker in a different thread, create a new instance of your LLM Client and that comes with
-    a brand new LLMUsageTracker instance.
     """
 
     def __init__(self):
@@ -71,48 +69,21 @@ class LLMUsageTracker:
         self.total_tokens: int = 0
         self.total_cost: float = 0.0
         self._lock = asyncio.Lock()  # Add a lock for thread safety
-        self._context_active = False  # Track if the context manager is active
-
-    async def __aenter__(self):
-        async with self._lock:
-            if self._context_active:
-                raise RuntimeError(
-                    "LLMUsageTracker context is already active. If you need to open the context manager in a different async thread, create a new LLMUsageTracker instance."
-                )
-            self._context_active = True
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        async with self._lock:
-            self._reset()
-            self._context_active = False
 
     async def update(self, usage, provider: str, model: LLMMeta):
         if provider.lower() != "openai":
             raise ValueError("Currently, only 'openai' provider is supported.")
 
         async with self._lock:
-            if not self._context_active:
-                raise RuntimeError("LLMUsageTracker context is not active. Update operation is not allowed.")
-
             model_costs = LLMMeta.get_model_cost(model)
-
             self.completion_tokens += usage.completion_tokens
             self.prompt_tokens += usage.prompt_tokens
             self.total_tokens += usage.total_tokens
-
             input_cost_per_token = model_costs["input"] / 1_000_000
             output_cost_per_token = model_costs["output"] / 1_000_000
-
             self.total_cost += (usage.prompt_tokens * input_cost_per_token) + (
                 usage.completion_tokens * output_cost_per_token
             )
-
-    def _reset(self):
-        self.completion_tokens = 0
-        self.prompt_tokens = 0
-        self.total_tokens = 0
-        self.total_cost = 0.0
 
     def __repr__(self):
         return (
@@ -155,7 +126,17 @@ class AsyncClient:
         else:
             self.model = model
 
-        self.usage_tracker = LLMUsageTracker()  # Initialize the usage tracker here
+        self._usage_tracker = None
+
+    @asynccontextmanager
+    async def usage_tracker(self):
+        if self._usage_tracker is not None:
+            raise RuntimeError(
+                "Usage Tracker context is already active. If you need it in a different async thread, create a new AsyncClient instance and use that."
+            )
+        self._usage_tracker = LLMUsageTracker()
+        yield self._usage_tracker
+        self._usage_tracker = None
 
     async def invoke(
         self, messages: list[Message], output_type: Optional[Type[BaseModel]] = None, max_retries: Optional[int] = 3
@@ -168,8 +149,8 @@ class AsyncClient:
                 stream=False,
                 raw_processor_fn=lambda original: (
                     (
-                        self.usage_tracker.update(original.usage, self.provider, self.model)
-                        if original.usage and self.usage_tracker.active
+                        self._usage_tracker.update(original.usage, self.provider, self.model)
+                        if original.usage and self._usage_tracker
                         else None
                     ),
                 ),
@@ -182,8 +163,8 @@ class AsyncClient:
                 messages=[message.to_dict() for message in messages],
                 stream=False,
             )
-            if response.usage and self.usage_tracker.active:
-                self.usage_tracker.update(response.usage, self.provider, self.model)
+            if response.usage and self._usage_tracker:
+                self._usage_tracker.update(response.usage, self.provider, self.model)
 
             # Craft a Message response from the response variable
             choice = response.choices[0]
@@ -209,8 +190,8 @@ class AsyncClient:
             first_chunk = True
             role = None
             async for chunk in response:
-                if chunk.usage and not chunk.choices and self.usage_tracker.active:
-                    self.usage_tracker.update(chunk.usage, self.provider, self.model)
+                if chunk.usage and not chunk.choices and self._usage_tracker:
+                    self._usage_tracker.update(chunk.usage, self.provider, self.model)
                 if chunk.choices:
                     choice = chunk.choices[0]
                     if first_chunk:
