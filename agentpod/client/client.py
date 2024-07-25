@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from agentpod.client.structured.custom_async_openai import CustomAsyncOpenAI
 from agentpod.client.structured.mode import Mode
-from agentpod.client.structured.patch import patch
+from agentpod.utils.tracker import LLMMeta, UsageTracker
 
 
 class Message(BaseModel):
@@ -25,82 +25,13 @@ class Message(BaseModel):
         return self.model_dump()
 
 
-MODEL_COSTS = {
-    "gpt-4o": {"input": 5.00, "output": 15.00},
-    "gpt-4o-mini": {"input": 0.150, "output": 0.600},
-    "gpt-4o-2024-05-13": {"input": 5.00, "output": 15.00},
-    "gpt-4-turbo": {"input": 10.00, "output": 30.00},
-    "gpt-4-turbo-2024-04-09": {"input": 10.00, "output": 30.00},
-    "gpt-4": {"input": 30.00, "output": 60.00},
-    "gpt-4-32k": {"input": 60.00, "output": 120.00},
-    "gpt-3.5-turbo-0125": {"input": 0.50, "output": 1.50},
-    "gpt-3.5-turbo-instruct": {"input": 1.50, "output": 2.00},
-}
-
-
-class LLMMeta(Enum):
-    GPT_4O = "gpt-4o"
-    GPT_4O_MINI = "gpt-4o-mini"
-    GPT_4O_2024_05_13 = "gpt-4o-2024-05-13"
-    GPT_4_TURBO = "gpt-4-turbo"
-    GPT_4_TURBO_2024_04_09 = "gpt-4-turbo-2024-04-09"
-    GPT_4 = "gpt-4"
-    GPT_4_32K = "gpt-4-32k"
-    GPT_3_5_TURBO_0125 = "gpt-3.5-turbo-0125"
-    GPT_3_5_TURBO_INSTRUCT = "gpt-3.5-turbo-instruct"
-
-    @classmethod
-    def get_model_cost(cls, model):
-        return MODEL_COSTS[model.value]
-
-
-class LLMUsageTracker:
-    """
-    A class to track the usage of LLM (Large Language Models) and calculate the associated costs.
-
-    This class is designed to be thread-safe for asynchronous operations using asyncio.Lock.
-    Note that it is not thread-safe for synchronous operations because asyncio.Lock is
-    specifically designed for use with asyncio's event loop and does not provide protection
-    against concurrent access from multiple threads.
-    """
-
-    def __init__(self):
-        self.completion_tokens: int = 0
-        self.prompt_tokens: int = 0
-        self.total_tokens: int = 0
-        self.total_cost: float = 0.0
-        self._lock = asyncio.Lock()  # Add a lock for thread safety
-
-    async def update(self, usage, provider: str, model: LLMMeta):
-        if provider.lower() != "openai":
-            raise ValueError("Currently, only 'openai' provider is supported.")
-
-        async with self._lock:
-            model_costs = LLMMeta.get_model_cost(model)
-            self.completion_tokens += usage.completion_tokens
-            self.prompt_tokens += usage.prompt_tokens
-            self.total_tokens += usage.total_tokens
-            input_cost_per_token = model_costs["input"] / 1_000_000
-            output_cost_per_token = model_costs["output"] / 1_000_000
-            self.total_cost += (usage.prompt_tokens * input_cost_per_token) + (
-                usage.completion_tokens * output_cost_per_token
-            )
-
-    def __repr__(self):
-        return (
-            f"UsageTracker(completion_tokens={self.completion_tokens}, "
-            f"prompt_tokens={self.prompt_tokens}, total_tokens={self.total_tokens}, "
-            f"total_cost={self.total_cost:.6f})"
-        )
-
-
 class AsyncClient:
     def __init__(
         self,
         api_key: str = "",
         provider: str = "openai",
-        model: Union[str, LLMMeta] = LLMMeta.GPT_3_5_TURBO_INSTRUCT,
-        usage_tracker: LLMUsageTracker | None = None,
+        model: Union[str, LLMMeta] = LLMMeta.GPT_4O_MINI,
+        usage_tracker: UsageTracker | None = None,
     ):
         if provider.lower() != "openai":
             raise ValueError("Currently, only 'openai' provider is supported.")
@@ -141,7 +72,7 @@ class AsyncClient:
                 max_retries=max_retries,
             )
             if original.usage and self._usage_tracker:
-                await self._usage_tracker.update(original.usage, self.provider, self.model)
+                await self._usage_tracker.update_llm_cost(original.usage, self.provider, self.model)
             return response
         else:
             response = await self._native_client.chat.completions.create(
@@ -150,7 +81,7 @@ class AsyncClient:
                 stream=False,
             )
             if response.usage and self._usage_tracker:
-                await self._usage_tracker.update(response.usage, self.provider, self.model)
+                await self._usage_tracker.update_llm_cost(response.usage, self.provider, self.model)
 
             # Craft a Message response from the response variable
             choice = response.choices[0]
@@ -177,7 +108,7 @@ class AsyncClient:
             role = None
             async for chunk in response:
                 if chunk.usage and not chunk.choices and self._usage_tracker:
-                    self._usage_tracker.update(chunk.usage, self.provider, self.model)
+                    self._usage_tracker.update_llm_cost(chunk.usage, self.provider, self.model)
                 if chunk.choices:
                     choice = chunk.choices[0]
                     if first_chunk:
