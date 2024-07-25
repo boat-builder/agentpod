@@ -27,6 +27,7 @@ class Message(BaseModel):
 
 MODEL_COSTS = {
     "gpt-4o": {"input": 5.00, "output": 15.00},
+    "gpt-4o-mini": {"input": 0.150, "output": 0.600},
     "gpt-4o-2024-05-13": {"input": 5.00, "output": 15.00},
     "gpt-4-turbo": {"input": 10.00, "output": 30.00},
     "gpt-4-turbo-2024-04-09": {"input": 10.00, "output": 30.00},
@@ -39,6 +40,7 @@ MODEL_COSTS = {
 
 class LLMMeta(Enum):
     GPT_4O = "gpt-4o"
+    GPT_4O_MINI = "gpt-4o-mini"
     GPT_4O_2024_05_13 = "gpt-4o-2024-05-13"
     GPT_4_TURBO = "gpt-4-turbo"
     GPT_4_TURBO_2024_04_09 = "gpt-4-turbo-2024-04-09"
