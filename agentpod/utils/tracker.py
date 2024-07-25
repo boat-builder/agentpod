@@ -66,7 +66,7 @@ class UsageTracker:
             cost = (usage.prompt_tokens * input_cost_per_token) + (usage.completion_tokens * output_cost_per_token)
             self.total_llm_cost += cost
 
-    async def update_search_cost(self, num_search: int):
+    async def update_search_cost(self, num_search: int = 1):
         async with self._lock:
             self.total_search_count += num_search
             self.total_search_cost += num_search * COST_PER_SEARCH

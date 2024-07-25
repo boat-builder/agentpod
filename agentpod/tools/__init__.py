@@ -8,7 +8,7 @@ from agentpod.utils.tracker import UsageTracker
 
 
 class BraveSearch:
-    def __init__(self, api_key, enable_cache=False, usage_tracker: UsageTracker = None):
+    def __init__(self, api_key, enable_cache=False, usage_tracker: UsageTracker | None = None):
         self.api_key = api_key
         self.enable_cache = enable_cache
         self.client = AsyncBrave(api_key=self.api_key)
