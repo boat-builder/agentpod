@@ -32,6 +32,21 @@ class LLMMeta(Enum):
         return MODEL_COSTS[model.value]
 
 
+SEARCH_COSTS = {
+    "bing": 0.005,
+    "brave": 0.005,
+}
+
+
+class SearchMeta(Enum):
+    BING = "bing"
+    BRAVE = "brave"
+
+    @classmethod
+    def get_search_cost(cls, search_engine):
+        return SEARCH_COSTS[search_engine.value]
+
+
 class UsageTracker:
     """
     A class to track the usage of LLM (Large Language Models) and search operations, and calculate the associated costs.
@@ -66,10 +81,11 @@ class UsageTracker:
             cost = (usage.prompt_tokens * input_cost_per_token) + (usage.completion_tokens * output_cost_per_token)
             self.total_llm_cost += cost
 
-    async def update_search_cost(self, num_search: int = 1):
+    async def update_search_cost(self, num_search: int = 1, search_engine: SearchMeta = SearchMeta.BING):
+        search_cost = SearchMeta.get_search_cost(search_engine)
         async with self._lock:
             self.total_search_count += num_search
-            self.total_search_cost += num_search * COST_PER_SEARCH
+            self.total_search_cost += num_search * search_cost
 
     @property
     def total_cost(self) -> float:

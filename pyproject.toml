@@ -24,6 +24,10 @@ openai = "^1.32.0"
 pydantic = "^2.7.3"
 tenacity = "^8.3.0"
 docstring-parser = "^0.16"
+requests = "^2.32.3"
+bs4 = "^0.0.2"
+numpy = "^2.0.1"
+azure-cognitiveservices-search-websearch = "^2.0.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.1"
