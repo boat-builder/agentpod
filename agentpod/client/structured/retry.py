@@ -25,66 +25,6 @@ T = TypeVar("T")
 
 
 def reask_messages(response: ChatCompletion, mode: Mode, exception: Exception):
-    if mode == Mode.ANTHROPIC_TOOLS:
-        # The original response
-        assistant_content = []
-        tool_use_id = None
-        for content in response.content:
-            assistant_content.append(content.model_dump())
-            # Assuming exception from single tool invocation
-            if (
-                content.type == "tool_use"
-                and isinstance(exception, ValidationError)
-                and content.name == exception.title
-            ):
-                tool_use_id = content.id
-
-        yield {
-            "role": "assistant",
-            "content": assistant_content,
-        }
-        if tool_use_id is not None:
-            yield {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": f"Validation Error found:\n{exception}\nRecall the function correctly, fix the errors",
-                        "is_error": True,
-                    }
-                ],
-            }
-        else:
-            yield {
-                "role": "user",
-                "content": f"Validation Error due to no tool invocation:\n{exception}\nRecall the function correctly, fix the errors",
-            }
-        return
-    if mode == Mode.ANTHROPIC_JSON:
-        from anthropic.types import Message
-
-        assert isinstance(response, Message)
-        yield {
-            "role": "user",
-            "content": f"""Validation Errors found:\n{exception}\nRecall the function correctly, fix the errors found in the following attempt:\n{response.content[0].text}""",
-        }
-        return
-    if mode == Mode.COHERE_TOOLS:
-        yield {
-            "role": "user",
-            "content": f"Validation Error found:\n{exception}\nRecall the function correctly, fix the errors",
-        }
-        return
-    if mode == Mode.GEMINI_JSON:
-        yield {
-            "role": "user",
-            "parts": [
-                f"Correct the following JSON response, based on the errors given below:\n\nJSON:\n{response.text}\n\nExceptions:\n{exception}"
-            ],
-        }
-        return
-
     yield dump_message(response.choices[0].message)
     # TODO: Give users more control on configuration
     if mode == Mode.TOOLS:
@@ -95,11 +35,6 @@ def reask_messages(response: ChatCompletion, mode: Mode, exception: Exception):
                 "name": tool_call.function.name,
                 "content": f"Validation Error found:\n{exception}\nRecall the function correctly, fix the errors",
             }
-    elif mode == Mode.MD_JSON:
-        yield {
-            "role": "user",
-            "content": f"Correct your JSON ONLY RESPONSE, based on the following errors:\n{exception}",
-        }
     else:
         yield {
             "role": "user",

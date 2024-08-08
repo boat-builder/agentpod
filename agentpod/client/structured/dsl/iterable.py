@@ -16,7 +16,9 @@ class IterableBase:
     task_type: ClassVar[Optional[type[BaseModel]]] = None
 
     @classmethod
-    def from_streaming_response(cls, completion: Iterable[Any], mode: Mode, **kwargs: Any) -> Generator[BaseModel, None, None]:  # noqa: ARG003
+    def from_streaming_response(
+        cls, completion: Iterable[Any], mode: Mode, **kwargs: Any
+    ) -> Generator[BaseModel, None, None]:  # noqa: ARG003
         json_chunks = cls.extract_json(completion, mode)
 
         if mode == Mode.MD_JSON:
@@ -25,7 +27,9 @@ class IterableBase:
         yield from cls.tasks_from_chunks(json_chunks, **kwargs)
 
     @classmethod
-    async def from_streaming_response_async(cls, completion: AsyncGenerator[Any, None], mode: Mode, **kwargs: Any) -> AsyncGenerator[BaseModel, None]:
+    async def from_streaming_response_async(
+        cls, completion: AsyncGenerator[Any, None], mode: Mode, **kwargs: Any
+    ) -> AsyncGenerator[BaseModel, None]:
         json_chunks = cls.extract_json_async(completion, mode)
 
         if mode == Mode.MD_JSON:
@@ -52,7 +56,9 @@ class IterableBase:
                 yield obj
 
     @classmethod
-    async def tasks_from_chunks_async(cls, json_chunks: AsyncGenerator[str, None], **kwargs: Any) -> AsyncGenerator[BaseModel, None]:
+    async def tasks_from_chunks_async(
+        cls, json_chunks: AsyncGenerator[str, None], **kwargs: Any
+    ) -> AsyncGenerator[BaseModel, None]:
         started = False
         potential_object = ""
         async for chunk in json_chunks:
@@ -73,21 +79,8 @@ class IterableBase:
     def extract_json(completion: Iterable[Any], mode: Mode) -> Generator[str, None, None]:
         for chunk in completion:
             try:
-                if mode == Mode.ANTHROPIC_JSON:
-                    if json_chunk := chunk.delta.text:
-                        yield json_chunk
-                if mode == Mode.ANTHROPIC_TOOLS:
-                    yield chunk.model_extra.get("delta", "").get("partial_json", "")
-                if mode == Mode.GEMINI_JSON:
-                    yield chunk.text
-                elif chunk.choices:
-                    if mode == Mode.FUNCTIONS:
-                        if json_chunk := chunk.choices[0].delta.function_call.arguments:
-                            yield json_chunk
-                    elif mode in {Mode.JSON, Mode.MD_JSON, Mode.JSON_SCHEMA}:
-                        if json_chunk := chunk.choices[0].delta.content:
-                            yield json_chunk
-                    elif mode == Mode.TOOLS:
+                if chunk.choices:
+                    if mode == Mode.TOOLS:
                         if json_chunk := chunk.choices[0].delta.tool_calls:
                             yield json_chunk[0].function.arguments
                     else:
@@ -99,19 +92,8 @@ class IterableBase:
     async def extract_json_async(completion: AsyncGenerator[Any, None], mode: Mode) -> AsyncGenerator[str, None]:
         async for chunk in completion:
             try:
-                if mode == Mode.ANTHROPIC_JSON:
-                    if json_chunk := chunk.delta.text:
-                        yield json_chunk
-                if mode == Mode.ANTHROPIC_TOOLS:
-                    yield chunk.model_extra.get("delta", "").get("partial_json", "")
-                elif chunk.choices:
-                    if mode == Mode.FUNCTIONS:
-                        if json_chunk := chunk.choices[0].delta.function_call.arguments:
-                            yield json_chunk
-                    elif mode in {Mode.JSON, Mode.MD_JSON, Mode.JSON_SCHEMA}:
-                        if json_chunk := chunk.choices[0].delta.content:
-                            yield json_chunk
-                    elif mode == Mode.TOOLS:
+                if chunk.choices:
+                    if mode == Mode.TOOLS:
                         if json_chunk := chunk.choices[0].delta.tool_calls:
                             yield json_chunk[0].function.arguments
                     else:

@@ -76,7 +76,9 @@ class PartialBase(Generic[T_Model]):
         )  # type: ignore[all]
 
     @classmethod
-    def from_streaming_response(cls, completion: Iterable[Any], mode: Mode, **kwargs: Any) -> Generator[T_Model, None, None]:
+    def from_streaming_response(
+        cls, completion: Iterable[Any], mode: Mode, **kwargs: Any
+    ) -> Generator[T_Model, None, None]:
         json_chunks = cls.extract_json(completion, mode)
 
         if mode == Mode.MD_JSON:
@@ -85,7 +87,9 @@ class PartialBase(Generic[T_Model]):
         yield from cls.model_from_chunks(json_chunks, **kwargs)
 
     @classmethod
-    async def from_streaming_response_async(cls, completion: AsyncGenerator[Any, None], mode: Mode, **kwargs: Any) -> AsyncGenerator[T_Model, None]:
+    async def from_streaming_response_async(
+        cls, completion: AsyncGenerator[Any, None], mode: Mode, **kwargs: Any
+    ) -> AsyncGenerator[T_Model, None]:
         json_chunks = cls.extract_json_async(completion, mode)
 
         if mode == Mode.MD_JSON:
@@ -105,7 +109,9 @@ class PartialBase(Generic[T_Model]):
             yield obj
 
     @classmethod
-    async def model_from_chunks_async(cls, json_chunks: AsyncGenerator[str, None], **kwargs: Any) -> AsyncGenerator[T_Model, None]:
+    async def model_from_chunks_async(
+        cls, json_chunks: AsyncGenerator[str, None], **kwargs: Any
+    ) -> AsyncGenerator[T_Model, None]:
         potential_object = ""
         partial_model = cls.get_partial_model()
         async for chunk in json_chunks:
@@ -118,21 +124,8 @@ class PartialBase(Generic[T_Model]):
     def extract_json(completion: Iterable[Any], mode: Mode) -> Generator[str, None, None]:
         for chunk in completion:
             try:
-                if mode == Mode.ANTHROPIC_JSON:
-                    if json_chunk := chunk.delta.text:
-                        yield json_chunk
-                if mode == Mode.ANTHROPIC_TOOLS:
-                    yield chunk.model_extra.get("delta", "").get("partial_json", "")
-                if mode == Mode.GEMINI_JSON:
-                    yield chunk.text
-                elif chunk.choices:
-                    if mode == Mode.FUNCTIONS:
-                        if json_chunk := chunk.choices[0].delta.function_call.arguments:
-                            yield json_chunk
-                    elif mode in {Mode.JSON, Mode.MD_JSON, Mode.JSON_SCHEMA}:
-                        if json_chunk := chunk.choices[0].delta.content:
-                            yield json_chunk
-                    elif mode == Mode.TOOLS:
+                if chunk.choices:
+                    if mode == Mode.TOOLS:
                         if json_chunk := chunk.choices[0].delta.tool_calls:
                             yield json_chunk[0].function.arguments
                     else:
@@ -144,19 +137,8 @@ class PartialBase(Generic[T_Model]):
     async def extract_json_async(completion: AsyncGenerator[Any, None], mode: Mode) -> AsyncGenerator[str, None]:
         async for chunk in completion:
             try:
-                if mode == Mode.ANTHROPIC_JSON:
-                    if json_chunk := chunk.delta.text:
-                        yield json_chunk
-                if mode == Mode.ANTHROPIC_TOOLS:
-                    yield chunk.model_extra.get("delta", "").get("partial_json", "")
-                elif chunk.choices:
-                    if mode == Mode.FUNCTIONS:
-                        if json_chunk := chunk.choices[0].delta.function_call.arguments:
-                            yield json_chunk
-                    elif mode in {Mode.JSON, Mode.MD_JSON, Mode.JSON_SCHEMA}:
-                        if json_chunk := chunk.choices[0].delta.content:
-                            yield json_chunk
-                    elif mode == Mode.TOOLS:
+                if chunk.choices:
+                    if mode == Mode.TOOLS:
                         if json_chunk := chunk.choices[0].delta.tool_calls:
                             yield json_chunk[0].function.arguments
                     else:
@@ -229,7 +211,10 @@ class Partial(Generic[T_Model]):
                 generic_args = get_args(annotation)
 
                 # Recursively apply Partial to each of the generic arguments
-                modified_args = tuple((Partial[arg] if isinstance(arg, type) and issubclass(arg, BaseModel) else arg) for arg in generic_args)
+                modified_args = tuple(
+                    (Partial[arg] if isinstance(arg, type) and issubclass(arg, BaseModel) else arg)
+                    for arg in generic_args
+                )
 
                 # Reconstruct the generic type with modified arguments
                 tmp_field.annotation = generic_base[modified_args] if generic_base else None
@@ -240,8 +225,17 @@ class Partial(Generic[T_Model]):
             return tmp_field.annotation, tmp_field
 
         return create_model(
-            __model_name=(wrapped_class.__name__ if wrapped_class.__name__.startswith("Partial") else f"Partial{wrapped_class.__name__}"),
+            __model_name=(
+                wrapped_class.__name__
+                if wrapped_class.__name__.startswith("Partial")
+                else f"Partial{wrapped_class.__name__}"
+            ),
             __base__=(wrapped_class, PartialBase),
             __module__=wrapped_class.__module__,
-            **{field_name: (_make_field_optional(field_info) if make_fields_optional is not None else _wrap_models(field_info)) for field_name, field_info in wrapped_class.model_fields.items()},
+            **{
+                field_name: (
+                    _make_field_optional(field_info) if make_fields_optional is not None else _wrap_models(field_info)
+                )
+                for field_name, field_info in wrapped_class.model_fields.items()
+            },
         )  # type: ignore
