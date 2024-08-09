@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 import pytest
 from pydantic import BaseModel, Field
@@ -60,3 +61,30 @@ async def test_output_type_constrained():
     assert isinstance(response, GreetingResponseConstrained)
     assert isinstance(response.greeting, str)
     assert response.greeting.startswith("Hai Boatbuilder")
+
+
+@pytest.mark.asyncio
+async def test_output_type_list():
+    # Get the OpenAI API key from environment variable
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        pytest.skip("OPENAI_API_KEY environment variable not set")
+
+    tracker = UsageTracker()
+
+    # Initialize the AsyncClient
+    client = AsyncClient(api_key=api_key, model=LLMMeta.GPT_4O_MINI)
+
+    # Create a simple message
+    messages = [Message(role="user", content="Generate three different greetings in three different languages")]
+
+    # Invoke the client with a response model
+    response = await client.invoke(messages, output_type=List[str])
+    print(response)
+
+    # Assert that we got a response
+    assert isinstance(response, list)
+    assert len(response) == 3
+    for greeting in response:
+        assert isinstance(greeting, str)
+        assert len(greeting) > 0
