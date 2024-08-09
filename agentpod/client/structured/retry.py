@@ -6,7 +6,6 @@ from json import JSONDecodeError
 from typing import Any, Callable, TypeVar
 
 from openai.types.chat import ChatCompletion
-from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, ValidationError
 from tenacity import AsyncRetrying, RetryError, Retrying, stop_after_attempt
 from typing_extensions import ParamSpec
@@ -14,7 +13,7 @@ from typing_extensions import ParamSpec
 from .exceptions import InstructorRetryException
 from .mode import Mode
 from .process_response import process_response_async
-from .utils import dump_message, merge_consecutive_messages, update_total_usage
+from .utils import dump_message, merge_consecutive_messages
 
 logger = logging.getLogger("instructor")
 

@@ -10,6 +10,7 @@ from agentpod.utils.tracker import SearchMeta, UsageTracker
 
 
 class BingSearchResult(BaseModel):
+    title: str = Field(..., description="The title of the search result")
     url: str = Field(..., description="The URL of the search result")
     snippet: str = Field(..., description="A short description or snippet of the search result")
 
@@ -38,12 +39,11 @@ class BingSearch:
                     response = await client.get(self.endpoint, headers=headers, params=params)
                     response.raise_for_status()
                     search_results = response.json()
-
                 if self.usage_tracker:
                     await self.usage_tracker.update_search_cost(search_engine=SearchMeta.BING)
 
                 results = [
-                    BingSearchResult(url=result["url"], snippet=result["snippet"])
+                    BingSearchResult(title=result["name"], url=result["url"], snippet=result["snippet"])
                     for result in search_results.get("webPages", {}).get("value", [])
                 ]
                 return results
