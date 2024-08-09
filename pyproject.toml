@@ -28,6 +28,7 @@ requests = "^2.32.3"
 bs4 = "^0.0.2"
 numpy = "<2.0.0"
 azure-cognitiveservices-search-websearch = "^2.0.1"
+python-dateutil = "^2.9.0.post0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.1"

@@ -3,9 +3,10 @@ import pytest
 from agentpod.utils import contentize
 
 
-def test_contentize_boatbuilder():
+@pytest.mark.asyncio
+async def test_contentize_boatbuilder():
     url = "https://boatbuilder.dev"
-    content = contentize(url)
+    content = await contentize(url)
 
     print(content)
 

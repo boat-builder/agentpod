@@ -1,10 +1,9 @@
-from typing import Union
-
-import requests
 from bs4 import BeautifulSoup
 
+from agentpod.http.client import retryable_httpx
 
-def contentize(url: str) -> str:
+
+async def contentize(url: str) -> str:
     """
     Extract and structure content from a given URL.
 
@@ -15,7 +14,7 @@ def contentize(url: str) -> str:
         str: A string of extracted content formatted in markdown.
     """
     # Fetch and parse the webpage
-    soup = fetch_and_parse_url(url)
+    soup = await fetch_and_parse_url(url)
 
     # Define tags we want to extract content from
     relevant_tags = get_relevant_tags()
@@ -25,11 +24,12 @@ def contentize(url: str) -> str:
     return extract_content_from_body(body_content, relevant_tags)
 
 
-def fetch_and_parse_url(url: str) -> BeautifulSoup:
+async def fetch_and_parse_url(url: str) -> BeautifulSoup:
     """Fetch the webpage and parse it with BeautifulSoup."""
-    response = requests.get(url)
-    response.raise_for_status()  # Ensure we got a successful response
-    return BeautifulSoup(response.text, "html.parser")
+    async with retryable_httpx() as client:
+        response = await client.get(url)
+        response.raise_for_status()  # Ensure we got a successful response
+        return BeautifulSoup(response.text, "html.parser")
 
 
 def get_relevant_tags() -> list[str]:

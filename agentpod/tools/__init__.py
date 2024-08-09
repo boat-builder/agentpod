@@ -1,1 +1,1 @@
-from .bing import BingSearch
+from .bing import AsyncBingSearch

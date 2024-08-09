@@ -3,7 +3,7 @@ import os
 import pytest
 
 from agentpod import UsageTracker
-from agentpod.tools import BingSearch
+from agentpod.tools import AsyncBingSearch
 from agentpod.tools.bing import BingSearchResult
 
 
@@ -17,11 +17,11 @@ async def test_bing_search_client():
     tracker = UsageTracker()
 
     # Initialize the BingSearch
-    bing_client = BingSearch(api_key=bing_api_key, usage_tracker=tracker)
+    bing_client = AsyncBingSearch(api_key=bing_api_key, usage_tracker=tracker)
 
     # Perform a search
     search_query = "How can I use Localportal for accessing remote jupyter?"
-    search_results = await bing_client.asearch(query=search_query, count=3)
+    search_results = await bing_client.search(query=search_query, count=3, fetch_content=True)
 
     # Assert that we got a response
     assert isinstance(search_results, list)
@@ -34,6 +34,7 @@ async def test_bing_search_client():
         assert hasattr(first_result, "url")
         assert hasattr(first_result, "snippet")
         assert hasattr(first_result, "title")
+        assert hasattr(first_result, "content")
     # Verify that the search results are related to the query
     assert any(
         "jupyter" in result.snippet.lower() or "localportal" in result.snippet.lower() for result in search_results
