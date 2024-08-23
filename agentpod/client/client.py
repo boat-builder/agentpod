@@ -1,7 +1,6 @@
 import asyncio
 import os
-from enum import Enum
-from typing import AsyncGenerator, Literal, Optional, Type, Union
+from typing import AsyncGenerator, Dict, List, Literal, Optional, Type, Union
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
@@ -11,18 +10,44 @@ from agentpod.client.structured.mode import Mode
 from agentpod.utils.tracker import LLMMeta, UsageTracker
 
 
+class TextContent(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ImageContent(BaseModel):
+    type: Literal["image_url"] = "image_url"
+    url: Optional[str] = None
+    base64: Optional[str] = (
+        None  # f"data:image/jpeg;base64,{base64_image}" - we should have a utility to read from file
+    )
+    detail: Optional[str] = "auto"  # "auto", "high", "low"
+
+    def model_dump(self) -> Dict[str, Union[str, Dict[str, str]]]:
+        result = {"type": "image_url"}
+        image_url = {}
+        if self.url:
+            image_url["url"] = self.url
+        elif self.base64:
+            image_url["url"] = self.base64
+        if self.detail:
+            image_url["detail"] = self.detail
+        result["image_url"] = image_url
+        return result
+
+
+ContentType = Union[str, List[Union[TextContent, ImageContent]]]
+
+
 class Message(BaseModel):
     role: Literal["user", "assistant", "system"]
-    content: str
+    content: ContentType
 
-    def to_dict(self) -> dict[
-        Literal[
-            "role",
-            "content",
-        ],
-        str,
-    ]:
-        return self.model_dump()
+    def to_dict(self) -> Dict[str, Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]]:
+        if isinstance(self.content, str):
+            return {"role": self.role, "content": self.content}
+        else:
+            return {"role": self.role, "content": [item.model_dump() for item in self.content]}
 
 
 class AsyncClient:

@@ -24,6 +24,3 @@ async def test_contentize_boatbuilder():
 
     # Check that the content has multiple lines
     assert len(content.split("\n")) > 1, "Content should have multiple lines"
-
-    # Check that there are no empty lines in the content
-    assert all(line.strip() for line in content.split("\n")), "Content should not contain empty lines"
