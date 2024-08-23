@@ -13,8 +13,8 @@ from agentpod import (
 )
 
 
-class IsBlackAndWhiteResponse(BaseModel):
-    is_black_and_white: bool
+class AltTag(BaseModel):
+    alt_tag: str
 
 
 @pytest.mark.asyncio
@@ -34,19 +34,22 @@ async def test_vision_and_output_type():
         Message(
             role="user",
             content=[
-                TextContent(text="is the image black and white?"),
+                TextContent(
+                    text="Give me a detailed description of what is in the image, the camera angle etc so I can use that as the alt tag for the image to make it ADA compliant"
+                ),
                 ImageContent(
-                    url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+                    url="https://s3.amazonaws.com/zcom-media/sites/a0iE000000GVzCxIAL/media/catalog/product/1/0/1009543.jpg"
                 ),
             ],
         )
     ]
 
     # Invoke the client
-    response: IsBlackAndWhiteResponse = await client.invoke(messages, output_type=IsBlackAndWhiteResponse)
+    response: AltTag = await client.invoke(messages, output_type=AltTag)
+    print(response)
 
     # Assert that we got a response
-    assert isinstance(response, IsBlackAndWhiteResponse)
+    assert isinstance(response, AltTag)
 
     print(tracker)
 
