@@ -31,8 +31,12 @@ class AsyncBingSearch:
 
     async def search(self, query, count=3, fetch_content=False) -> List[BingSearchResult]:
         if self.enable_cache:
-            cache_enabled_func = file_cache()(self._asearch_with_retry)
+            cache_enabled_func = file_cache()(self._search_with_retry)
             return await cache_enabled_func(query, count, fetch_content)
+        else:
+            return await self._search_with_retry(query, count, fetch_content)
+
+    async def _search_with_retry(self, query, count=3, fetch_content=False) -> List[BingSearchResult]:
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
         params = {"q": query, "count": count}
 
