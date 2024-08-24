@@ -13,15 +13,17 @@ async def contentize(url: str) -> str:
     Returns:
         str: A string of extracted content formatted in markdown.
     """
-    # Fetch and parse the webpage
-    soup = await fetch_and_parse_url(url)
+    try:
+        # Fetch and parse the webpage
+        soup = await fetch_and_parse_url(url)
+        # Define tags we want to extract content from
+        relevant_tags = get_relevant_tags()
 
-    # Define tags we want to extract content from
-    relevant_tags = get_relevant_tags()
-
-    # Extract content from the body of the document
-    body_content = soup.body if soup.body else soup
-    return extract_content_from_body(body_content, relevant_tags)
+        # Extract content from the body of the document
+        body_content = soup.body if soup.body else soup
+        return extract_content_from_body(body_content, relevant_tags)
+    except Exception:
+        return None
 
 
 async def fetch_and_parse_url(url: str) -> BeautifulSoup:
