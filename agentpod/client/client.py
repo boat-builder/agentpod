@@ -133,7 +133,7 @@ class AsyncClient:
             role = None
             async for chunk in response:
                 if chunk.usage and not chunk.choices and self._usage_tracker:
-                    self._usage_tracker.update_llm_cost(chunk.usage, self.provider, self.model)
+                    await self._usage_tracker.update_llm_cost(chunk.usage, self.provider, self.model)
                 if chunk.choices:
                     choice = chunk.choices[0]
                     if first_chunk:
