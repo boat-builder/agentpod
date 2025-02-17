@@ -2,20 +2,7 @@
 
 AgentPod is a Go package that provides an extensible framework for building agents with support for skills, tools, memory, and sessions.
 
-## Package Structure
-
-- go.mod: Module definition.
-- README.md: Project description.
-- agentpod/
-  - agent.go: Defines the Agent struct and its interface.
-  - skill.go: Defines Skill and related interfaces.
-  - tool.go: Defines Tool and related interfaces.
-  - memory.go: Defines Memory interface and default implementation.
-  - session.go: Defines the Session struct and its methods.
-  - message.go: Defines message-related types like AgentMessage.
-  - errors.go: Centralized error definitions.
-
-AI Agent Framework Design Document
+## Agent Framework Design Document (made by ChatGPT)
 
 1. Introduction
 
