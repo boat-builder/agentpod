@@ -3,25 +3,25 @@ package agentpod
 import (
 	"github.com/boat-builder/agentpod/agent"
 	"github.com/boat-builder/agentpod/agentpod/session"
-	"github.com/boat-builder/agentpod/llm"
 	"github.com/boat-builder/agentpod/memory"
+	"github.com/openai/openai-go"
 )
 
 type Agent = agent.Agent
 type Skill = agent.Skill
 type Tool = agent.Tool
-type LLM = llm.LLM
+type LLM = openai.Client
 type Memory = memory.Memory
 
 type Pod struct {
-	LLM llm.LLM
-	Mem memory.Memory
-	AI  *agent.Agent
+	LLM LLM
+	Mem Memory
+	AI  *Agent
 	// Additional fields: config, logging, etc.
 }
 
 // NewPod constructs a new Pod with the given resources.
-func NewPod(llmClient llm.LLM, mem memory.Memory, ai *agent.Agent) *Pod {
+func NewPod(llmClient LLM, mem Memory, ai *Agent) *Pod {
 	return &Pod{
 		LLM: llmClient,
 		Mem: mem,

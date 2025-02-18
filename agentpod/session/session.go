@@ -4,8 +4,8 @@ package session
 
 import (
 	"github.com/boat-builder/agentpod/agent"
-	"github.com/boat-builder/agentpod/llm"
 	"github.com/boat-builder/agentpod/memory"
+	"github.com/openai/openai-go"
 )
 
 // Session holds ephemeral conversation data & references to global resources.
@@ -13,7 +13,7 @@ type Session struct {
 	userID    string
 	sessionID string
 
-	llmClient llm.LLM
+	llmClient openai.Client
 	mem       memory.Memory
 	agent     *agent.Agent
 
@@ -21,7 +21,7 @@ type Session struct {
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
-func NewSession(userID, sessionID string, llmClient llm.LLM, mem memory.Memory, ag *agent.Agent) *Session {
+func NewSession(userID, sessionID string, llmClient openai.Client, mem memory.Memory, ag *agent.Agent) *Session {
 	return &Session{
 		userID:    userID,
 		sessionID: sessionID,

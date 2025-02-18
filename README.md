@@ -1,8 +1,11 @@
 # AgentPod
 
-AgentPod is a Go package that provides an extensible framework for building agents with support for skills, tools, memory, and sessions.
+AgentPod was started as a simple agent framework in python which is being rewritten in Go for the sole purpose of using it in [Agent Berlin](https://agentberlin.ai). The upside of that is, it's been used in production handling scale and is battle tested. The downside is that it's very strict in the design and only has the features we needed for Berlin to work. This might change in the future but that's what it is now.
 
-## Agent Framework Design Document (made by ChatGPT)
+What you find below is the original design guide we made with the help of ChatGPT. In case you want to build your own agent framework, you should be able to edit this guide and pass it to an agentic software engineer (like cursor) to implement it.
+
+
+## Agent Framework Design Document
 
 1. Introduction
 
