@@ -7,21 +7,19 @@ type Memory interface {
 	Update(userID, sessionID, key, value string) error
 }
 
-// DBMemory is a placeholder for a database-based memory implementation.
-type DBMemory struct {
-	// Possibly store DB connections here, e.g. *sql.DB or a client
+// ZepMemory is a placeholder for a database-based memory implementation.
+type Zep struct{}
+
+func NewZep() *Zep {
+	return &Zep{}
 }
 
-func NewDBMemory( /* db config */ ) *DBMemory {
-	return &DBMemory{}
-}
-
-func (dbm *DBMemory) Retrieve(userID, sessionID, key string) (string, error) {
+func (z *Zep) Retrieve(userID, sessionID, key string) (string, error) {
 	// Implementation stub: query DB for row matching userID/sessionID/key
 	return "", nil
 }
 
-func (dbm *DBMemory) Update(userID, sessionID, key, value string) error {
+func (z *Zep) Update(userID, sessionID, key, value string) error {
 	// Implementation stub: upsert or update DB record
 	return nil
 }
