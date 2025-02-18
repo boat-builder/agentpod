@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/boat-builder/agentpod/agent"
+	"github.com/boat-builder/agentpod/llm"
 	"github.com/boat-builder/agentpod/memory"
 	"github.com/openai/openai-go"
 )
@@ -16,9 +17,9 @@ type Session struct {
 	userID    string
 	sessionID string
 
-	llm   openai.Client
-	mem   memory.Memory
-	agent *agent.Agent
+	llm *llm.LLM
+	mem memory.Memory
+	ai  *agent.Agent
 
 	// Fields for conversation history, ephemeral context, partial results, etc.
 	inChannel  chan string
@@ -26,13 +27,13 @@ type Session struct {
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
-func NewSession(userID, sessionID string, llmClient openai.Client, mem memory.Memory, ag *agent.Agent) *Session {
+func NewSession(userID, sessionID string, llm *llm.LLM, mem memory.Memory, ag *agent.Agent) *Session {
 	s := &Session{
 		userID:     userID,
 		sessionID:  sessionID,
-		llm:        llmClient,
+		llm:        llm,
 		mem:        mem,
-		agent:      ag,
+		ai:         ag,
 		inChannel:  make(chan string),
 		outChannel: make(chan Message),
 	}

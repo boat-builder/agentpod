@@ -16,7 +16,7 @@ func TestSimpleConversation(t *testing.T) {
 	mem := &memory.Zep{}
 	ai := &agentpod.Agent{}
 
-	pod := agentpod.NewPod(llmClient, mem, ai)
+	pod := agentpod.NewPod(&llmClient, mem, ai)
 	session := pod.NewSession("user1", "session1")
 
 	session.In("This is a test script. Respond with just 'test confirmed' for the test to pass.")
