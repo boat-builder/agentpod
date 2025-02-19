@@ -39,7 +39,12 @@ type Session struct {
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
 func NewSession(ctx context.Context, userID, sessionID string, llmConfig llm.LLMConfig, mem memory.Memory, ag *agent.Agent) *Session {
-	llmClient := openai.NewClient(option.WithBaseURL(llmConfig.BaseURL), option.WithAPIKey(llmConfig.APIKey))
+	var llmClient *openai.Client
+	if llmConfig.BaseURL != "" {
+		llmClient = openai.NewClient(option.WithBaseURL(llmConfig.BaseURL), option.WithAPIKey(llmConfig.APIKey))
+	} else {
+		llmClient = openai.NewClient(option.WithAPIKey(llmConfig.APIKey))
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		userID:     userID,
@@ -98,13 +103,15 @@ func (s *Session) run() {
 				openai.UserMessage(userMessage),
 			}),
 			Model: openai.F(s.modelName),
+			StreamOptions: openai.F(openai.ChatCompletionStreamOptionsParam{
+				IncludeUsage: openai.F(true),
+			}),
 		})
 
 		completion := openai.ChatCompletionAccumulator{}
 		for stream.Next() {
 			chunk := stream.Current()
 			completion.AddChunk(chunk)
-
 			s.accumulatedInputTokens += chunk.Usage.PromptTokens
 			s.accumulatedOutputTokens += chunk.Usage.CompletionTokens
 
