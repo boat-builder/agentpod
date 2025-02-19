@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"testing"
 
 	"github.com/boat-builder/agentpod/agentpod"
@@ -22,7 +23,8 @@ func TestSimpleConversation(t *testing.T) {
 	ai := &agentpod.Agent{}
 
 	pod := agentpod.NewPod(&llmConfig, mem, ai)
-	session := pod.NewSession("user1", "session1")
+	ctx := context.Background()
+	session := pod.NewSession(ctx, "user1", "session1")
 
 	session.In("This is a test script. Respond with just 'test confirmed' for the test to pass.")
 	out := session.Out()

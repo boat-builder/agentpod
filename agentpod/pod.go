@@ -1,6 +1,8 @@
 package agentpod
 
 import (
+	"context"
+
 	"github.com/boat-builder/agentpod/agent"
 	"github.com/boat-builder/agentpod/agentpod/session"
 	"github.com/boat-builder/agentpod/llm"
@@ -31,8 +33,8 @@ func NewPod(llmConfig *LLMConfig, mem Memory, ai *Agent) *Pod {
 // NewSession creates a new conversation session for a given user and session ID.
 // A session handles a single user message and maintains the internal state of the agents
 // as they interact to generate a response.
-func (p *Pod) NewSession(userID, sessionID string) *session.Session {
-	return session.NewSession(userID, sessionID, *p.llmConfig, p.Mem, p.AI)
+func (p *Pod) NewSession(ctx context.Context, userID, sessionID string) *session.Session {
+	return session.NewSession(ctx, userID, sessionID, *p.llmConfig, p.Mem, p.AI)
 }
 
 // NewAgent constructs a new Agent with the given LLM client and skills.

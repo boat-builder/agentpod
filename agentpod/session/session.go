@@ -5,6 +5,7 @@ package session
 import (
 	"context"
 	"log"
+	"sync"
 
 	"github.com/boat-builder/agentpod/agent"
 	"github.com/boat-builder/agentpod/llm"
@@ -30,11 +31,17 @@ type Session struct {
 	accumulatedInputTokens  int64
 	accumulatedOutputTokens int64
 	modelName               string
+
+	// New fields for graceful shutdown
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
-func NewSession(userID, sessionID string, llmConfig llm.LLMConfig, mem memory.Memory, ag *agent.Agent) *Session {
+func NewSession(ctx context.Context, userID, sessionID string, llmConfig llm.LLMConfig, mem memory.Memory, ag *agent.Agent) *Session {
 	llmClient := openai.NewClient(option.WithBaseURL(llmConfig.BaseURL), option.WithAPIKey(llmConfig.APIKey))
+	ctx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		userID:     userID,
 		sessionID:  sessionID,
@@ -44,6 +51,8 @@ func NewSession(userID, sessionID string, llmConfig llm.LLMConfig, mem memory.Me
 		inChannel:  make(chan string),
 		outChannel: make(chan Message),
 		modelName:  llmConfig.Model,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 	// Initialize cost tracking fields
 	s.accumulatedInputTokens = 0
@@ -64,30 +73,45 @@ func (s *Session) Out() Message {
 
 // Close ends the session lifecycle and releases any resources if needed.
 func (s *Session) Close() {
-	// Implementation: flush conversation history, finalize logs, etc.
+	s.closeOnce.Do(func() {
+		s.cancel()
+		close(s.inChannel)
+	})
 }
 
 // Run processes messages from the input channel, performs chat completion, and sends results to the output channel.
 func (s *Session) run() {
-	for userMessage := range s.inChannel {
-		completion, err := s.llm.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
-			Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
-				openai.UserMessage(userMessage),
-			}),
-			Model: openai.F("azure/gpt-4o"),
-		})
-		if err != nil {
-			log.Printf("Error during chat completion: %v", err)
-			continue
+	for {
+		select {
+		case <-s.ctx.Done():
+			s.outChannel <- Message{Type: MessageTypeEnd}
+			close(s.outChannel)
+			return
+		case userMessage, ok := <-s.inChannel:
+			if !ok {
+				s.outChannel <- Message{Type: MessageTypeEnd}
+				close(s.outChannel)
+				return
+			}
+			completion, err := s.llm.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
+				Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
+					openai.UserMessage(userMessage),
+				}),
+				Model: openai.F("azure/gpt-4o"),
+			})
+			if err != nil {
+				log.Printf("Error during chat completion: %v", err)
+				continue
+			}
+			// Accumulate token usage from the response (completion.Usage is a struct, so no nil check is needed)
+			s.accumulatedInputTokens += completion.Usage.PromptTokens
+			s.accumulatedOutputTokens += completion.Usage.CompletionTokens
+			msg := Message{
+				Content: completion.Choices[0].Message.Content,
+				Type:    MessageTypePartialText,
+			}
+			s.outChannel <- msg
 		}
-		// Accumulate token usage from the response (completion.Usage is a struct, so no nil check is needed)
-		s.accumulatedInputTokens += completion.Usage.PromptTokens
-		s.accumulatedOutputTokens += completion.Usage.CompletionTokens
-		msg := Message{
-			Content: completion.Choices[0].Message.Content,
-			Type:    MessageTypeResult,
-		}
-		s.outChannel <- msg
 	}
 }
 

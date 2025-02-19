@@ -7,7 +7,8 @@ type MessageType string
 
 const (
 	MessageTypeStatus       MessageType = "status"
-	MessageTypeResult       MessageType = "result"
+	MessageTypePartialText  MessageType = "partial-text"
+	MessageTypeEnd          MessageType = "end"
 	MessageTypeInputRequest MessageType = "input-request"
 	MessageTypeError        MessageType = "error"
 )
