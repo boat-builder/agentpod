@@ -7,8 +7,10 @@ import (
 	"log"
 
 	"github.com/boat-builder/agentpod/agent"
+	"github.com/boat-builder/agentpod/llm"
 	"github.com/boat-builder/agentpod/memory"
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 )
 
 // Session holds ephemeral conversation data & references to global resources.
@@ -23,19 +25,29 @@ type Session struct {
 	// Fields for conversation history, ephemeral context, partial results, etc.
 	inChannel  chan string
 	outChannel chan Message
+
+	// New fields for tracking cost information
+	accumulatedInputTokens  int64
+	accumulatedOutputTokens int64
+	modelName               string
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
-func NewSession(userID, sessionID string, llm *openai.Client, mem memory.Memory, ag *agent.Agent) *Session {
+func NewSession(userID, sessionID string, llmConfig llm.LLMConfig, mem memory.Memory, ag *agent.Agent) *Session {
+	llmClient := openai.NewClient(option.WithBaseURL(llmConfig.BaseURL), option.WithAPIKey(llmConfig.APIKey))
 	s := &Session{
 		userID:     userID,
 		sessionID:  sessionID,
-		llm:        llm,
+		llm:        llmClient,
 		mem:        mem,
 		ai:         ag,
 		inChannel:  make(chan string),
 		outChannel: make(chan Message),
+		modelName:  llmConfig.Model,
 	}
+	// Initialize cost tracking fields
+	s.accumulatedInputTokens = 0
+	s.accumulatedOutputTokens = 0
 	go s.run()
 	return s
 }
@@ -68,10 +80,73 @@ func (s *Session) run() {
 			log.Printf("Error during chat completion: %v", err)
 			continue
 		}
+		// Accumulate token usage from the response (completion.Usage is a struct, so no nil check is needed)
+		s.accumulatedInputTokens += completion.Usage.PromptTokens
+		s.accumulatedOutputTokens += completion.Usage.CompletionTokens
 		msg := Message{
 			Content: completion.Choices[0].Message.Content,
 			Type:    MessageTypeResult,
 		}
 		s.outChannel <- msg
 	}
+}
+
+// TokenRates defines cost per million tokens for input and output
+type TokenRates struct {
+	Input  float64
+	Output float64
+}
+
+// Pricing constants for GPT-4o and GPT-4o-mini (in dollars per million tokens)
+const (
+	GPT4oInputRate      = 2.5
+	GPT4oOutputRate     = 10.0
+	GPT4oMiniInputRate  = 0.15
+	GPT4oMiniOutputRate = 0.60
+)
+
+// ModelPricings is a map of model names to their pricing information
+var ModelPricings = map[string]TokenRates{
+	"gpt-4o": {
+		Input:  GPT4oInputRate,
+		Output: GPT4oOutputRate,
+	},
+	"azure/gpt-4o": {
+		Input:  GPT4oInputRate,
+		Output: GPT4oOutputRate,
+	},
+	"gpt-4o-mini": {
+		Input:  GPT4oMiniInputRate,
+		Output: GPT4oMiniOutputRate,
+	},
+	"azure/gpt-4o-mini": {
+		Input:  GPT4oMiniInputRate,
+		Output: GPT4oMiniOutputRate,
+	},
+}
+
+// CostDetails represents detailed cost information for a session
+type CostDetails struct {
+	InputTokens  int64
+	OutputTokens int64
+	TotalCost    float64
+}
+
+// Cost returns the accumulated cost of the session.
+// It calculates the cost based on the total input and output tokens and the pricing for the session's model.
+func (s *Session) Cost() (*CostDetails, bool) {
+	pricing, exists := ModelPricings[s.modelName]
+	if !exists {
+		return nil, false
+	}
+
+	inputCost := float64(s.accumulatedInputTokens) * pricing.Input / 1000000
+	outputCost := float64(s.accumulatedOutputTokens) * pricing.Output / 1000000
+	totalCost := inputCost + outputCost
+
+	return &CostDetails{
+		InputTokens:  s.accumulatedInputTokens,
+		OutputTokens: s.accumulatedOutputTokens,
+		TotalCost:    totalCost,
+	}, true
 }

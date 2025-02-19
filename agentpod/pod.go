@@ -5,8 +5,6 @@ import (
 	"github.com/boat-builder/agentpod/agentpod/session"
 	"github.com/boat-builder/agentpod/llm"
 	"github.com/boat-builder/agentpod/memory"
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
 )
 
 type Agent = agent.Agent
@@ -34,8 +32,7 @@ func NewPod(llmConfig *LLMConfig, mem Memory, ai *Agent) *Pod {
 // A session handles a single user message and maintains the internal state of the agents
 // as they interact to generate a response.
 func (p *Pod) NewSession(userID, sessionID string) *session.Session {
-	llmClient := *openai.NewClient(option.WithBaseURL(p.llmConfig.BaseURL), option.WithAPIKey(p.llmConfig.APIKey))
-	return session.NewSession(userID, sessionID, &llmClient, p.Mem, p.AI)
+	return session.NewSession(userID, sessionID, *p.llmConfig, p.Mem, p.AI)
 }
 
 // NewAgent constructs a new Agent with the given LLM client and skills.
