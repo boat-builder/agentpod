@@ -4,7 +4,6 @@ package session
 
 import (
 	"context"
-	"log"
 	"sync"
 
 	"github.com/boat-builder/agentpod/agent"
@@ -82,41 +81,66 @@ func (s *Session) Close() {
 // Run processes messages from the input channel, performs chat completion, and sends results to the output channel.
 func (s *Session) run() {
 	defer s.Close()
-	for {
-		select {
-		case <-s.ctx.Done():
+
+	select {
+	case <-s.ctx.Done():
+		s.outChannel <- Message{Type: MessageTypeEnd}
+	case userMessage, ok := <-s.inChannel:
+		if !ok {
 			s.outChannel <- Message{Type: MessageTypeEnd}
-			return
-		case userMessage, ok := <-s.inChannel:
-			if !ok {
-				s.outChannel <- Message{Type: MessageTypeEnd}
-				close(s.outChannel)
-				return
-			}
-			completion, err := s.llm.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
-				Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
-					openai.UserMessage(userMessage),
-				}),
-				Model: openai.F("azure/gpt-4o"),
-			})
-			if err != nil {
-				log.Printf("Error during chat completion: %v", err)
-				continue
-			}
-			// Accumulate token usage from the response (completion.Usage is a struct, so no nil check is needed)
-			s.accumulatedInputTokens += completion.Usage.PromptTokens
-			s.accumulatedOutputTokens += completion.Usage.CompletionTokens
-			msg := Message{
-				Content: completion.Choices[0].Message.Content,
-				Type:    MessageTypePartialText,
-			}
-			s.outChannel <- msg
-			s.outChannel <- Message{
-				Type: MessageTypeEnd,
-			}
+			close(s.outChannel)
 			return
 		}
 
+		// Process the user message
+		stream := s.llm.Chat.Completions.NewStreaming(context.Background(), openai.ChatCompletionNewParams{
+			Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
+				openai.UserMessage(userMessage),
+			}),
+			Model: openai.F("azure/gpt-4o"),
+		})
+
+		completion := openai.ChatCompletionAccumulator{}
+		for stream.Next() {
+			chunk := stream.Current()
+			completion.AddChunk(chunk)
+
+			// Check if the accumulator indicates the content is complete
+			if content, finished := completion.JustFinishedContent(); finished {
+				s.outChannel <- Message{
+					Content: content,
+					Type:    MessageTypeEnd,
+				}
+				break
+			}
+
+			// Only send partial message if there is non-empty content
+			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+				s.outChannel <- Message{
+					Content: chunk.Choices[0].Delta.Content,
+					Type:    MessageTypePartialText,
+				}
+			}
+		}
+
+		// If the stream ended without the final message, check once more
+		if content, finished := completion.JustFinishedContent(); finished {
+			s.outChannel <- Message{
+				Content: content,
+				Type:    MessageTypeEnd,
+			}
+		}
+
+		// Handle any errors from the stream
+		if err := stream.Err(); err != nil {
+			s.outChannel <- Message{
+				Content: err.Error(),
+				Type:    MessageTypeError,
+			}
+		}
+
+		s.accumulatedInputTokens += completion.Usage.PromptTokens
+		s.accumulatedOutputTokens += completion.Usage.CompletionTokens
 	}
 }
 
