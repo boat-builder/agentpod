@@ -97,7 +97,7 @@ func (s *Session) run() {
 			Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
 				openai.UserMessage(userMessage),
 			}),
-			Model: openai.F("azure/gpt-4o"),
+			Model: openai.F(s.modelName),
 		})
 
 		completion := openai.ChatCompletionAccumulator{}
