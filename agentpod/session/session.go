@@ -81,11 +81,11 @@ func (s *Session) Close() {
 
 // Run processes messages from the input channel, performs chat completion, and sends results to the output channel.
 func (s *Session) run() {
+	defer s.Close()
 	for {
 		select {
 		case <-s.ctx.Done():
 			s.outChannel <- Message{Type: MessageTypeEnd}
-			close(s.outChannel)
 			return
 		case userMessage, ok := <-s.inChannel:
 			if !ok {
@@ -111,7 +111,12 @@ func (s *Session) run() {
 				Type:    MessageTypePartialText,
 			}
 			s.outChannel <- msg
+			s.outChannel <- Message{
+				Type: MessageTypeEnd,
+			}
+			return
 		}
+
 	}
 }
 
