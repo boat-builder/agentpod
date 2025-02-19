@@ -105,6 +105,9 @@ func (s *Session) run() {
 			chunk := stream.Current()
 			completion.AddChunk(chunk)
 
+			s.accumulatedInputTokens += chunk.Usage.PromptTokens
+			s.accumulatedOutputTokens += chunk.Usage.CompletionTokens
+
 			// Check if the accumulator indicates the content is complete
 			if content, finished := completion.JustFinishedContent(); finished {
 				s.outChannel <- Message{
@@ -138,9 +141,6 @@ func (s *Session) run() {
 				Type:    MessageTypeError,
 			}
 		}
-
-		s.accumulatedInputTokens += completion.Usage.PromptTokens
-		s.accumulatedOutputTokens += completion.Usage.CompletionTokens
 	}
 }
 
