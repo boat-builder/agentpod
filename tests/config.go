@@ -1,19 +1,38 @@
 package tests
 
 import (
+	"log"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	OpenAIAPIKey    string
-	AzureAIAPIKey   string
-	AzureAIEndpoint string
+	OpenAIAPIKey       string
+	AzureAIAPIKey      string
+	AzureAIEndpoint    string
+	KeywordsAIAPIKey   string
+	KeywordsAIEndpoint string
 }
 
 func LoadConfig() *Config {
-	return &Config{
-		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
-		AzureAIAPIKey:   os.Getenv("AZURE_AI_API_KEY"),
-		AzureAIEndpoint: os.Getenv("AZURE_AI_ENDPOINT"),
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Error loading .env file, falling back to environment variables")
 	}
+
+	return &Config{
+		OpenAIAPIKey:       getEnv("OPENAI_API_KEY", ""),
+		AzureAIAPIKey:      getEnv("AZURE_AI_API_KEY", ""),
+		AzureAIEndpoint:    getEnv("AZURE_AI_ENDPOINT", ""),
+		KeywordsAIAPIKey:   getEnv("KEYWORDSAI_API_KEY", ""),
+		KeywordsAIEndpoint: getEnv("KEYWORDSAI_ENDPOINT", ""),
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
 }

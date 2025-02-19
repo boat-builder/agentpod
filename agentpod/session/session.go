@@ -7,7 +7,6 @@ import (
 	"log"
 
 	"github.com/boat-builder/agentpod/agent"
-	"github.com/boat-builder/agentpod/llm"
 	"github.com/boat-builder/agentpod/memory"
 	"github.com/openai/openai-go"
 )
@@ -17,7 +16,7 @@ type Session struct {
 	userID    string
 	sessionID string
 
-	llm *llm.LLM
+	llm *openai.Client
 	mem memory.Memory
 	ai  *agent.Agent
 
@@ -27,7 +26,7 @@ type Session struct {
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
-func NewSession(userID, sessionID string, llm *llm.LLM, mem memory.Memory, ag *agent.Agent) *Session {
+func NewSession(userID, sessionID string, llm *openai.Client, mem memory.Memory, ag *agent.Agent) *Session {
 	s := &Session{
 		userID:     userID,
 		sessionID:  sessionID,
@@ -63,7 +62,7 @@ func (s *Session) run() {
 			Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
 				openai.UserMessage(userMessage),
 			}),
-			Model: openai.F(openai.ChatModelGPT4o),
+			Model: openai.F("azure/gpt-4o"),
 		})
 		if err != nil {
 			log.Printf("Error during chat completion: %v", err)
@@ -71,7 +70,7 @@ func (s *Session) run() {
 		}
 		msg := Message{
 			Content: completion.Choices[0].Message.Content,
-			Type:    "output", // TODO: Replace with an appropriate MessageType constant if available
+			Type:    MessageTypeResult,
 		}
 		s.outChannel <- msg
 	}

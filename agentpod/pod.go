@@ -6,26 +6,27 @@ import (
 	"github.com/boat-builder/agentpod/llm"
 	"github.com/boat-builder/agentpod/memory"
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 )
 
 type Agent = agent.Agent
 type Skill = agent.Skill
 type Tool = agent.Tool
-type LLM = llm.LLM
+type LLMConfig = llm.LLMConfig
 type Memory = memory.Memory
 
 type Pod struct {
-	llm *LLM
-	Mem Memory
-	AI  *Agent
+	llmConfig *LLMConfig
+	Mem       Memory
+	AI        *Agent
 }
 
 // NewPod constructs a new Pod with the given resources.
-func NewPod(llm *LLM, mem Memory, ai *Agent) *Pod {
+func NewPod(llmConfig *LLMConfig, mem Memory, ai *Agent) *Pod {
 	return &Pod{
-		llm: llm,
-		Mem: mem,
-		AI:  ai,
+		llmConfig: llmConfig,
+		Mem:       mem,
+		AI:        ai,
 	}
 }
 
@@ -33,12 +34,13 @@ func NewPod(llm *LLM, mem Memory, ai *Agent) *Pod {
 // A session handles a single user message and maintains the internal state of the agents
 // as they interact to generate a response.
 func (p *Pod) NewSession(userID, sessionID string) *session.Session {
-	return session.NewSession(userID, sessionID, p.llm, p.Mem, p.AI)
+	llmClient := *openai.NewClient(option.WithBaseURL(p.llmConfig.BaseURL), option.WithAPIKey(p.llmConfig.APIKey))
+	return session.NewSession(userID, sessionID, &llmClient, p.Mem, p.AI)
 }
 
 // NewAgent constructs a new Agent with the given LLM client and skills.
-func NewAgent(llmClient *openai.Client, skills []Skill) *Agent {
-	return agent.NewAgent(llmClient, skills)
+func NewAgent(skills []Skill) *Agent {
+	return agent.NewAgent(skills)
 }
 
 // NewSkill constructs a new Skill with the given name, description, and tools.

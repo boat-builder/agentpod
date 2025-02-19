@@ -1,20 +1,16 @@
 // Package agent provides the main Agent orchestrator, which uses LLM & Skills to process data.
 package agent
 
-import "github.com/openai/openai-go"
-
 // Agent orchestrates calls to the LLM, uses Skills/Tools, and determines how to respond.
 type Agent struct {
-	llmClient *openai.Client
-	skills    []Skill
+	skills []Skill
 	// Additional config or system prompts, etc.
 }
 
 // NewAgent creates an Agent with the given LLM and optional skill set.
-func NewAgent(llmClient *openai.Client, skills []Skill) *Agent {
+func NewAgent(skills []Skill) *Agent {
 	return &Agent{
-		llmClient: llmClient,
-		skills:    skills,
+		skills: skills,
 	}
 }
 
