@@ -18,15 +18,15 @@ type Memory = memory.Memory
 type Pod struct {
 	llmConfig *LLMConfig
 	Mem       Memory
-	AI        *Agent
+	Agent     *Agent
 }
 
 // NewPod constructs a new Pod with the given resources.
-func NewPod(llmConfig *LLMConfig, mem Memory, ai *Agent) *Pod {
+func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent) *Pod {
 	return &Pod{
 		llmConfig: llmConfig,
 		Mem:       mem,
-		AI:        ai,
+		Agent:     ag,
 	}
 }
 
@@ -34,12 +34,12 @@ func NewPod(llmConfig *LLMConfig, mem Memory, ai *Agent) *Pod {
 // A session handles a single user message and maintains the internal state of the agents
 // as they interact to generate a response.
 func (p *Pod) NewSession(ctx context.Context, userID, sessionID string) *session.Session {
-	return session.NewSession(ctx, userID, sessionID, *p.llmConfig, p.Mem, p.AI)
+	return session.NewSession(ctx, userID, sessionID, *p.llmConfig, p.Mem, p.Agent)
 }
 
 // NewAgent constructs a new Agent with the given LLM client and skills.
-func NewAgent(skills []Skill) *Agent {
-	return agent.NewAgent(skills)
+func NewAgent(prompt string, skills []Skill) *Agent {
+	return agent.NewAgent(prompt, skills)
 }
 
 // NewSkill constructs a new Skill with the given name, description, and tools.

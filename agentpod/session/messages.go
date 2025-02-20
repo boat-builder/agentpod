@@ -17,5 +17,4 @@ const (
 type Message struct {
 	Content string
 	Type    MessageType
-	// Additional fields: e.g. isFinal, timestamps, etc.
 }

@@ -4,6 +4,7 @@ package session
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	"github.com/boat-builder/agentpod/agent"
@@ -20,21 +21,20 @@ type Session struct {
 
 	llm *openai.Client
 	mem memory.Memory
-	ai  *agent.Agent
+	ag  *agent.Agent
 
 	// Fields for conversation history, ephemeral context, partial results, etc.
-	inChannel  chan string
-	outChannel chan Message
+	inUserChannel  chan string
+	outUserChannel chan Message
 
-	// New fields for tracking cost information
-	accumulatedInputTokens  int64
-	accumulatedOutputTokens int64
-	modelName               string
+	modelName string
 
 	// New fields for graceful shutdown
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closeOnce sync.Once
+
+	logger *slog.Logger
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
@@ -45,108 +45,91 @@ func NewSession(ctx context.Context, userID, sessionID string, llmConfig llm.LLM
 	} else {
 		llmClient = openai.NewClient(option.WithAPIKey(llmConfig.APIKey))
 	}
+	ag.SetLLM(llmClient, llmConfig.Model)
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Session{
-		userID:     userID,
-		sessionID:  sessionID,
-		llm:        llmClient,
-		mem:        mem,
-		ai:         ag,
-		inChannel:  make(chan string),
-		outChannel: make(chan Message),
-		modelName:  llmConfig.Model,
-		ctx:        ctx,
-		cancel:     cancel,
+		userID:         userID,
+		sessionID:      sessionID,
+		llm:            llmClient,
+		mem:            mem,
+		ag:             ag,
+		inUserChannel:  make(chan string),
+		outUserChannel: make(chan Message),
+		modelName:      llmConfig.Model,
+		ctx:            ctx,
+		cancel:         cancel,
+		logger:         slog.Default(),
 	}
-	// Initialize cost tracking fields
-	s.accumulatedInputTokens = 0
-	s.accumulatedOutputTokens = 0
 	go s.run()
 	return s
 }
 
 // In processes incoming user messages. Could queue or immediately handle them.
 func (s *Session) In(userMessage string) {
-	s.inChannel <- userMessage
+	s.inUserChannel <- userMessage
 }
 
 // Out retrieves the next message from the output channel, blocking until a message is available.
 func (s *Session) Out() Message {
-	return <-s.outChannel
+	return <-s.outUserChannel
 }
 
 // Close ends the session lifecycle and releases any resources if needed.
 func (s *Session) Close() {
 	s.closeOnce.Do(func() {
 		s.cancel()
-		close(s.inChannel)
+		close(s.inUserChannel)
 	})
 }
 
-// Run processes messages from the input channel, performs chat completion, and sends results to the output channel.
+// run is the main loop for the session. It listens for user messages and process here. Although
+// we don't support now, the idea is that session should support interactive mode which is why
+// the input channel exists. Session should hold the control of how to route the messages to whichever agents
+// when we support multiple agents.
+// TODO - handle refusal everywhere
+// TODO - handle other errors like network errors everywhere
 func (s *Session) run() {
 	defer s.Close()
-
 	select {
 	case <-s.ctx.Done():
-		s.outChannel <- Message{Type: MessageTypeEnd}
-	case userMessage, ok := <-s.inChannel:
+		s.outUserChannel <- Message{Type: MessageTypeEnd}
+	case userMessage, ok := <-s.inUserChannel:
 		if !ok {
-			s.outChannel <- Message{Type: MessageTypeEnd}
-			close(s.outChannel)
+			s.logger.Error("Session input channel closed")
+			s.outUserChannel <- Message{Type: MessageTypeEnd}
 			return
 		}
-
-		// Process the user message
-		stream := s.llm.Chat.Completions.NewStreaming(context.Background(), openai.ChatCompletionNewParams{
-			Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
-				openai.UserMessage(userMessage),
-			}),
-			Model: openai.F(s.modelName),
-			StreamOptions: openai.F(openai.ChatCompletionStreamOptionsParam{
-				IncludeUsage: openai.F(true),
-			}),
-		})
-
 		completion := openai.ChatCompletionAccumulator{}
-		for stream.Next() {
-			chunk := stream.Current()
-			completion.AddChunk(chunk)
-			s.accumulatedInputTokens += chunk.Usage.PromptTokens
-			s.accumulatedOutputTokens += chunk.Usage.CompletionTokens
-
-			// Check if the accumulator indicates the content is complete
-			if content, finished := completion.JustFinishedContent(); finished {
-				s.outChannel <- Message{
-					Content: content,
-					Type:    MessageTypeEnd,
-				}
-				break
+		outAgentChannel, err := s.ag.Run(userMessage)
+		if err != nil {
+			s.outUserChannel <- Message{
+				Content: err.Error(),
+				Type:    MessageTypeError,
 			}
-
-			// Only send partial message if there is non-empty content
+		}
+		var openAIMessageID string
+		for chunk := range outAgentChannel {
+			// when chunk id is not same as the previous one, it's part of a new message. Reset everything.
+			if chunk.ID != openAIMessageID {
+				openAIMessageID = chunk.ID
+				completion = openai.ChatCompletionAccumulator{}
+			}
+			completion.AddChunk(chunk)
+			// We won't send the message as a "final message" because there can be other streams in progress.
+			// We'll wait for the channel to close
 			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-				s.outChannel <- Message{
+				s.outUserChannel <- Message{
 					Content: chunk.Choices[0].Delta.Content,
 					Type:    MessageTypePartialText,
 				}
 			}
 		}
 
-		// If the stream ended without the final message, check once more
-		if content, finished := completion.JustFinishedContent(); finished {
-			s.outChannel <- Message{
-				Content: content,
-				Type:    MessageTypeEnd,
-			}
-		}
+		// TODO - Handle any errors from the stream
 
-		// Handle any errors from the stream
-		if err := stream.Err(); err != nil {
-			s.outChannel <- Message{
-				Content: err.Error(),
-				Type:    MessageTypeError,
-			}
+		// channel is closed, send the final message
+		s.outUserChannel <- Message{
+			Type: MessageTypeEnd,
 		}
 	}
 }
@@ -194,19 +177,20 @@ type CostDetails struct {
 
 // Cost returns the accumulated cost of the session.
 // It calculates the cost based on the total input and output tokens and the pricing for the session's model.
+// TODO
 func (s *Session) Cost() (*CostDetails, bool) {
 	pricing, exists := ModelPricings[s.modelName]
 	if !exists {
 		return nil, false
 	}
 
-	inputCost := float64(s.accumulatedInputTokens) * pricing.Input / 1000000
-	outputCost := float64(s.accumulatedOutputTokens) * pricing.Output / 1000000
+	inputCost := float64(0) * pricing.Input / 1000000
+	outputCost := float64(0) * pricing.Output / 1000000
 	totalCost := inputCost + outputCost
 
 	return &CostDetails{
-		InputTokens:  s.accumulatedInputTokens,
-		OutputTokens: s.accumulatedOutputTokens,
+		InputTokens:  0,
+		OutputTokens: 0,
 		TotalCost:    totalCost,
 	}, true
 }
