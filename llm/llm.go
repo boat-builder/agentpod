@@ -52,3 +52,17 @@ func (ml *MessageList) Clone() *MessageList {
 		Messages: append([]openai.ChatCompletionMessageParamUnion{}, ml.Messages...),
 	}
 }
+
+func (ml *MessageList) LastUserMessageString() string {
+	for i := len(ml.Messages) - 1; i >= 0; i-- {
+		if userMessage, ok := ml.Messages[i].(openai.ChatCompletionUserMessageParam); ok {
+			parts := userMessage.Content.Value
+			for _, part := range parts {
+				if textPart, ok := part.(openai.ChatCompletionContentPartTextParam); ok {
+					return textPart.Text.Value
+				}
+			}
+		}
+	}
+	return ""
+}

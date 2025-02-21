@@ -18,7 +18,7 @@ type Memory = memory.Memory
 type Pod struct {
 	llmConfig *LLMConfig
 	Mem       Memory
-	Agent     *Agent
+	Agent     Agent
 }
 
 // NewPod constructs a new Pod with the given resources.
@@ -26,7 +26,7 @@ func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent) *Pod {
 	return &Pod{
 		llmConfig: llmConfig,
 		Mem:       mem,
-		Agent:     ag,
+		Agent:     *ag,
 	}
 }
 

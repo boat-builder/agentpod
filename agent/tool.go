@@ -2,10 +2,13 @@
 // Defines the Tool interface and basic stubs for tool usage.
 package agent
 
+import "github.com/openai/openai-go"
+
 type Tool interface {
 	Name() string
 	Description() string
-	Execute(args map[string]interface{}) (interface{}, error)
+	OpenAI() []openai.ChatCompletionToolParam
+	Execute(args map[string]interface{}) (string, error)
 }
 
 // BasicTool is a placeholder demonstrating a simple tool.

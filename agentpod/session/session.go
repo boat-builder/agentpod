@@ -25,7 +25,7 @@ type Session struct {
 	// TODO When we support multiple agents, we need to have a way for the consumer to craft the final message to the user as the
 	// agent's response for the conversation because multiple agents could be called parallely
 	// Also, when we have multiple agents, we'd need a messages array on the session
-	ag *agent.Agent
+	ag agent.Agent
 
 	// Fields for conversation history, ephemeral context, partial results, etc.
 	inUserChannel  chan string
@@ -42,7 +42,7 @@ type Session struct {
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
-func NewSession(ctx context.Context, userID, sessionID string, llmConfig llm.LLMConfig, mem memory.Memory, ag *agent.Agent) *Session {
+func NewSession(ctx context.Context, userID, sessionID string, llmConfig llm.LLMConfig, mem memory.Memory, ag agent.Agent) *Session {
 	var llmClient *openai.Client
 	if llmConfig.BaseURL != "" {
 		llmClient = openai.NewClient(option.WithBaseURL(llmConfig.BaseURL), option.WithAPIKey(llmConfig.APIKey))
