@@ -22,10 +22,7 @@ type Session struct {
 	llm               *openai.Client
 	llmMessageHistory *openai.ChatCompletion
 	mem               memory.Memory
-	// TODO When we support multiple agents, we need to have a way for the consumer to craft the final message to the user as the
-	// agent's response for the conversation because multiple agents could be called parallely
-	// Also, when we have multiple agents, we'd need a messages array on the session
-	ag agent.Agent
+	ag                agent.Agent
 
 	// Fields for conversation history, ephemeral context, partial results, etc.
 	inUserChannel  chan string
@@ -130,8 +127,6 @@ func (s *Session) run() {
 			}
 		}
 
-		// TODO - Handle any errors from the stream
-
 		// channel is closed, send the final message
 		s.outUserChannel <- Message{
 			Type: MessageTypeEnd,
@@ -182,7 +177,6 @@ type CostDetails struct {
 
 // Cost returns the accumulated cost of the session.
 // It calculates the cost based on the total input and output tokens and the pricing for the session's model.
-// TODO
 func (s *Session) Cost() (*CostDetails, bool) {
 	pricing, exists := ModelPricings[s.modelName]
 	if !exists {

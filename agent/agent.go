@@ -51,7 +51,7 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 }
 
 // TODO - we probably need to have a custom made description for the tool that uses skill.description
-// TODO - we should be filling other parameters for the FunctionDefinitionParam
+// TODO - Enable Strict mode for the functions
 func (a *Agent) convertSkillsToTools() []openai.ChatCompletionToolParam {
 	tools := []openai.ChatCompletionToolParam{}
 	for _, skill := range a.skills {
@@ -102,7 +102,6 @@ func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, cloned
 		}
 		completion, err := a.llmClient.Chat.Completions.New(context.Background(), params)
 		if err != nil {
-			// TODO - when these errors happen, we return the error but the agent.Run method ignores it so it will run in a loop
 			return nil, err
 		}
 
@@ -157,7 +156,6 @@ func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, cloned
 	}, nil
 }
 
-// TODO - we probably need our own ssestream wrapper
 // Run returns a stream of chat completion chunks. We don't do the streaming with channels like the session do
 // because session is the one that tracks a session's life cycle. We still need to figure out how to route
 // the intermediate input messages if "interactive=true" but the whole idea is Agent's will not have to deal
@@ -201,7 +199,7 @@ func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error)
 					break
 				}
 			}
-			// TODO when there is a stream Error, the stream.Next() won't execute and hence the next line will panic
+			// TODO when there is a stream Error, the stream.Next() won't execute and hence the next line will panic. Handle Stream.Error everywhere
 
 			// Check if both tool call and content are non-empty
 			// this won't affect the flow currently but this is not the expectation
@@ -258,9 +256,6 @@ func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error)
 				break
 			}
 		}
-
-		// TODO - handle errors
-		// stream.Err()
 	}()
 
 	return outAgentChannel, nil
