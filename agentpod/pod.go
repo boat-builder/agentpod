@@ -47,11 +47,6 @@ func NewSkill(name, description string, tools []Tool) *Skill {
 	return agent.NewSkill(name, description, tools)
 }
 
-// NewTool constructs a new BasicTool with the given tool name.
-func NewTool(toolName string) Tool {
-	return agent.NewBasicTool(toolName)
-}
-
 // NewMemory constructs a new Zep memory implementation.
 func NewMemory() Memory {
 	return memory.NewZep()

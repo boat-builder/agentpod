@@ -9,59 +9,46 @@ type LLMConfig struct {
 	Model   string
 }
 
-// LLMMessage is a shared interface for any message type we might have.
-type LLMMessage interface {
-	OpenAIMessage() openai.ChatCompletionMessageParamUnion
+// We have custom UserMessage/AssistantMessage/DeveloperMessage because openai go sdk currently have openai.DeveloperMessage()
+func UserMessage(content string) openai.ChatCompletionMessageParamUnion {
+	return openai.UserMessage(content)
 }
 
-// DeveloperMessage, SystemMessage, and UserMessage all implement LLMMessage.
-
-// DeveloperMessage represents a developer-level instruction or content.
-type DeveloperMessage struct {
-	Content string
+func AssistantMessage(content string) openai.ChatCompletionMessageParamUnion {
+	return openai.AssistantMessage(content)
 }
 
-func (d *DeveloperMessage) OpenAIMessage() openai.ChatCompletionMessageParamUnion {
+func DeveloperMessage(content string) openai.ChatCompletionMessageParamUnion {
 	return openai.ChatCompletionDeveloperMessageParam{
 		Role: openai.F(openai.ChatCompletionDeveloperMessageParamRoleDeveloper),
 		Content: openai.F([]openai.ChatCompletionContentPartTextParam{
-			openai.TextPart(d.Content),
+			openai.TextPart(content),
 		}),
 	}
 }
 
-// SystemMessage represents a system-level instruction or content.
-type SystemMessage struct {
-	Content string
-}
-
-func (s *SystemMessage) OpenAIMessage() openai.ChatCompletionMessageParamUnion {
-	return openai.SystemMessage(s.Content)
-}
-
-// UserMessage represents a user-level instruction or content.
-type UserMessage struct {
-	Content string
-}
-
-func (u *UserMessage) OpenAIMessage() openai.ChatCompletionMessageParamUnion {
-	return openai.UserMessage(u.Content)
-}
-
 // MessageList holds an ordered collection of LLMMessage to preserve the history.
 type MessageList struct {
-	Messages []LLMMessage
+	Messages []openai.ChatCompletionMessageParamUnion
+}
+
+func NewMessageList() *MessageList {
+	return &MessageList{
+		Messages: []openai.ChatCompletionMessageParamUnion{},
+	}
 }
 
 // Add appends a new message to the MessageList in a FIFO order.
-func (ml *MessageList) Add(msg LLMMessage) {
+func (ml *MessageList) Add(msg openai.ChatCompletionMessageParamUnion) {
 	ml.Messages = append(ml.Messages, msg)
 }
 
-func (ml *MessageList) OpenAIMessages() []openai.ChatCompletionMessageParamUnion {
-	messages := make([]openai.ChatCompletionMessageParamUnion, len(ml.Messages))
-	for i, msg := range ml.Messages {
-		messages[i] = msg.OpenAIMessage()
+func (ml *MessageList) All() []openai.ChatCompletionMessageParamUnion {
+	return ml.Messages
+}
+
+func (ml *MessageList) Clone() *MessageList {
+	return &MessageList{
+		Messages: append([]openai.ChatCompletionMessageParamUnion{}, ml.Messages...),
 	}
-	return messages
 }

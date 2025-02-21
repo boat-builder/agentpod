@@ -19,9 +19,13 @@ type Session struct {
 	userID    string
 	sessionID string
 
-	llm *openai.Client
-	mem memory.Memory
-	ag  *agent.Agent
+	llm               *openai.Client
+	llmMessageHistory *openai.ChatCompletion
+	mem               memory.Memory
+	// TODO When we support multiple agents, we need to have a way for the consumer to craft the final message to the user as the
+	// agent's response for the conversation because multiple agents could be called parallely
+	// Also, when we have multiple agents, we'd need a messages array on the session
+	ag *agent.Agent
 
 	// Fields for conversation history, ephemeral context, partial results, etc.
 	inUserChannel  chan string
@@ -46,6 +50,7 @@ func NewSession(ctx context.Context, userID, sessionID string, llmConfig llm.LLM
 		llmClient = openai.NewClient(option.WithAPIKey(llmConfig.APIKey))
 	}
 	ag.SetLLM(llmClient, llmConfig.Model)
+	ag.SetLogger(slog.Default())
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		userID:         userID,
