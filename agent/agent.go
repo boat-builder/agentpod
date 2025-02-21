@@ -89,14 +89,26 @@ func (a *Agent) GenerateSummary(messages *llm.MessageList) (string, error) {
 	return completion.Choices[0].Message.Content, nil
 }
 
-func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, messages *llm.MessageList) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, clonedMessages *llm.MessageList) (openai.ChatCompletionMessageParamUnion, error) {
+	a.logger.Info("Running skill", "skill", skill.Name)
 	for {
-		completion, err := a.llmClient.Chat.Completions.New(
-			context.Background(),
-			openai.ChatCompletionNewParams{})
+		params := openai.ChatCompletionNewParams{
+			Messages: openai.F(clonedMessages.All()),
+			Model:    openai.F(a.modelName),
+		}
+		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
+		if len(skill.GetTools()) > 0 {
+			params.Tools = openai.F(skill.GetTools())
+		}
+		completion, err := a.llmClient.Chat.Completions.New(context.Background(), params)
 		if err != nil {
+			// TODO - when these errors happen, we return the error but the agent.Run method ignores it so it will run in a loop
 			return nil, err
 		}
+
+		// adding the assistant message to the cloned messages
+		clonedMessages.Add(completion.Choices[0].Message)
+
 		// Check if both tool call and content are non-empty
 		// this won't affect the flow currently but this is not the expectation
 		bothToolCallAndContent := completion.Choices[0].Message.ToolCalls != nil && completion.Choices[0].Message.Content != ""
@@ -106,10 +118,6 @@ func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, messag
 
 		// if there is no tool call, break
 		if completion.Choices[0].Message.ToolCalls == nil {
-			// before breaking, if there is non empty content, add it as an assistant message
-			if completion.Choices[0].Message.Content != "" {
-				messages.Add(llm.AssistantMessage(completion.Choices[0].Message.Content))
-			}
 			break
 		}
 
@@ -118,6 +126,7 @@ func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, messag
 			if err != nil {
 				return nil, err
 			}
+			a.logger.Info("Tool", "tool", tool.Name(), "arguments", toolCall.Function.Arguments)
 			arguments := map[string]interface{}{}
 			err = json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments)
 			if err != nil {
@@ -125,24 +134,25 @@ func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, messag
 			}
 			// TODO - model doesn't always generate valid JSON, so we need to validate the arguments and ask LLM to fix if there are errors
 			output, err := tool.Execute(arguments)
+			a.logger.Info("Tool output", "output", output)
 			if err != nil {
 				return nil, err
 			}
-			messages.Add(openai.ChatCompletionToolMessageParam{
+			clonedMessages.Add(openai.ChatCompletionToolMessageParam{
 				Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-				Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Text: openai.F(output)}}),
+				Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(output)}}),
 				ToolCallID: openai.F(toolCall.ID),
 			})
 		}
 	}
 
-	finalResponse, err := a.GenerateSummary(messages)
+	finalResponse, err := a.GenerateSummary(clonedMessages)
 	if err != nil {
 		return nil, err
 	}
 	return openai.ChatCompletionToolMessageParam{
 		Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-		Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Text: openai.F(finalResponse)}}),
+		Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(finalResponse)}}),
 		ToolCallID: openai.F(parentToolCallID),
 	}, nil
 }
@@ -165,6 +175,7 @@ func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error)
 	go func() {
 		defer close(outAgentChannel)
 		for {
+			// TODO every where we have tools, may be we need to ask if we need to continue before making a call with tools
 			// Stream messages from the LLM
 			params := openai.ChatCompletionNewParams{
 				Messages: openai.F(a.messages.All()),
@@ -176,6 +187,7 @@ func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error)
 			if len(a.convertSkillsToTools()) > 0 {
 				params.Tools = openai.F(a.convertSkillsToTools())
 			}
+			// TODO We need to keep the tool info in the state as well?
 			stream := a.llmClient.Chat.Completions.NewStreaming(context.Background(), params)
 			defer stream.Close()
 			completion := openai.ChatCompletionAccumulator{}
@@ -189,6 +201,7 @@ func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error)
 					break
 				}
 			}
+			// TODO when there is a stream Error, the stream.Next() won't execute and hence the next line will panic
 
 			// Check if both tool call and content are non-empty
 			// this won't affect the flow currently but this is not the expectation
@@ -200,10 +213,8 @@ func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error)
 			// cloning the message before appending the latest assistant message
 			clonedMessages := a.messages.Clone()
 
-			// Handle the response and append the content as an assistant message if it exists
-			if completion.Choices[0].Message.Content != "" {
-				a.messages.Add(llm.AssistantMessage(completion.Choices[0].Message.Content))
-			}
+			// Append the message to our messages
+			a.messages.Add(completion.Choices[0].Message)
 
 			// Process tool calls if they exist
 			if completion.Choices[0].Message.ToolCalls != nil {
