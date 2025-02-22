@@ -28,9 +28,12 @@ type Session struct {
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
+// TODO - make sure the context is properly managed, propagated
 func NewSession(ctx context.Context, userID, sessionID, modelName string) *Session {
 	state := NewSessionState()
 	ctx, cancel := context.WithCancel(ctx)
+	ctx = context.WithValue(ctx, llm.ContextKey("userID"), userID)
+	ctx = context.WithValue(ctx, llm.ContextKey("sessionID"), sessionID)
 	s := &Session{
 		userID:         userID,
 		sessionID:      sessionID,
