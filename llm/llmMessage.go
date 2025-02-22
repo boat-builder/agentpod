@@ -3,12 +3,6 @@ package llm
 
 import "github.com/openai/openai-go"
 
-type LLMConfig struct {
-	APIKey  string
-	BaseURL string
-	Model   string
-}
-
 // We have custom UserMessage/AssistantMessage/DeveloperMessage because openai go sdk currently have openai.DeveloperMessage()
 func UserMessage(content string) openai.ChatCompletionMessageParamUnion {
 	return openai.UserMessage(content)

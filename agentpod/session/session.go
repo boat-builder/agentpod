@@ -11,7 +11,6 @@ import (
 	"github.com/boat-builder/agentpod/llm"
 	"github.com/boat-builder/agentpod/memory"
 	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
 )
 
 // Session holds ephemeral conversation data & references to global resources.
@@ -19,10 +18,9 @@ type Session struct {
 	userID    string
 	sessionID string
 
-	llm               *openai.Client
-	llmMessageHistory *openai.ChatCompletion
-	mem               memory.Memory
-	ag                agent.Agent
+	llm *llm.LLM
+	mem memory.Memory
+	ag  agent.Agent
 
 	// Fields for conversation history, ephemeral context, partial results, etc.
 	inUserChannel  chan string
@@ -38,16 +36,20 @@ type Session struct {
 	logger *slog.Logger
 }
 
+// injectIdentifiersIntoContext injects the user ID and session ID into the context.
+func injectIdentifiersIntoContext(ctx context.Context, userID, sessionID string) context.Context {
+	ctx = context.WithValue(ctx, llm.ContextKey("userID"), userID)
+	ctx = context.WithValue(ctx, llm.ContextKey("sessionID"), sessionID)
+	return ctx
+}
+
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
 func NewSession(ctx context.Context, userID, sessionID string, llmConfig llm.LLMConfig, mem memory.Memory, ag agent.Agent) *Session {
-	var llmClient *openai.Client
-	if llmConfig.BaseURL != "" {
-		llmClient = openai.NewClient(option.WithBaseURL(llmConfig.BaseURL), option.WithAPIKey(llmConfig.APIKey))
-	} else {
-		llmClient = openai.NewClient(option.WithAPIKey(llmConfig.APIKey))
+	ctx = injectIdentifiersIntoContext(ctx, userID, sessionID)
+	llmClient := llm.NewLLMClient(&llmConfig)
+	if ag.GetLogger() == nil {
+		ag.SetLogger(slog.Default())
 	}
-	ag.SetLLM(llmClient, llmConfig.Model)
-	ag.SetLogger(slog.Default())
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		userID:         userID,
@@ -102,7 +104,7 @@ func (s *Session) run() {
 			return
 		}
 		completion := openai.ChatCompletionAccumulator{}
-		outAgentChannel, err := s.ag.Run(userMessage)
+		outAgentChannel, err := s.ag.Run(s.ctx, userMessage, s.llm, s.modelName)
 		if err != nil {
 			s.outUserChannel <- Message{
 				Content: err.Error(),

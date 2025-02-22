@@ -14,11 +14,9 @@ import (
 
 // Agent orchestrates calls to the LLM, uses Skills/Tools, and determines how to respond.
 type Agent struct {
-	skills    []Skill
-	messages  *llm.MessageList
-	llmClient *openai.Client
-	modelName string
-	logger    *slog.Logger
+	skills   []Skill
+	messages *llm.MessageList
+	logger   *slog.Logger
 }
 
 // NewAgent creates an Agent by adding the prompt as a DeveloperMessage.
@@ -32,9 +30,8 @@ func NewAgent(prompt string, skills []Skill) *Agent {
 	}
 }
 
-func (a *Agent) SetLLM(llmClient *openai.Client, modelName string) {
-	a.llmClient = llmClient
-	a.modelName = modelName
+func (a *Agent) GetLogger() *slog.Logger {
+	return a.logger
 }
 
 func (a *Agent) SetLogger(logger *slog.Logger) {
@@ -67,7 +64,7 @@ func (a *Agent) convertSkillsToTools() []openai.ChatCompletionToolParam {
 	return tools
 }
 
-func (a *Agent) GenerateSummary(messages *llm.MessageList) (string, error) {
+func (a *Agent) GenerateSummary(ctx context.Context, messages *llm.MessageList, llmClient *llm.LLM, modelName string) (string, error) {
 	lastUserMessage := messages.LastUserMessageString()
 	if lastUserMessage == "" {
 		return "", fmt.Errorf("no user message found")
@@ -76,11 +73,11 @@ func (a *Agent) GenerateSummary(messages *llm.MessageList) (string, error) {
 	summaryPrompt := fmt.Sprintf("Summarize the conversation as an answer to the first question: %s", lastUserMessage)
 	messages.Add(llm.DeveloperMessage(summaryPrompt))
 
-	completion, err := a.llmClient.Chat.Completions.New(
-		context.Background(),
+	completion, err := llmClient.New(
+		ctx,
 		openai.ChatCompletionNewParams{
 			Messages: openai.F(messages.All()),
-			Model:    openai.F(a.modelName),
+			Model:    openai.F(modelName),
 		})
 	if err != nil {
 		return "", err
@@ -89,18 +86,18 @@ func (a *Agent) GenerateSummary(messages *llm.MessageList) (string, error) {
 	return completion.Choices[0].Message.Content, nil
 }
 
-func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, clonedMessages *llm.MessageList) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Agent) skillContextRunner(ctx context.Context, skill *Skill, parentToolCallID string, clonedMessages *llm.MessageList, llmClient *llm.LLM, modelName string) (openai.ChatCompletionMessageParamUnion, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 	for {
 		params := openai.ChatCompletionNewParams{
 			Messages: openai.F(clonedMessages.All()),
-			Model:    openai.F(a.modelName),
+			Model:    openai.F(modelName),
 		}
 		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
 		if len(skill.GetTools()) > 0 {
 			params.Tools = openai.F(skill.GetTools())
 		}
-		completion, err := a.llmClient.Chat.Completions.New(context.Background(), params)
+		completion, err := llmClient.New(ctx, params)
 		if err != nil {
 			return nil, err
 		}
@@ -145,7 +142,7 @@ func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, cloned
 		}
 	}
 
-	finalResponse, err := a.GenerateSummary(clonedMessages)
+	finalResponse, err := a.GenerateSummary(ctx, clonedMessages, llmClient, modelName)
 	if err != nil {
 		return nil, err
 	}
@@ -160,10 +157,7 @@ func (a *Agent) skillContextRunner(skill *Skill, parentToolCallID string, cloned
 // because session is the one that tracks a session's life cycle. We still need to figure out how to route
 // the intermediate input messages if "interactive=true" but the whole idea is Agent's will not have to deal
 // with the lifecycle events like interactiveness with the end user which is the abstraction openai.client has
-func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error) {
-	if a.llmClient == nil {
-		panic("llmClient is not set")
-	}
+func (a *Agent) Run(ctx context.Context, userMessage string, llmClient *llm.LLM, modelName string) (chan openai.ChatCompletionChunk, error) {
 	if a.logger == nil {
 		panic("logger is not set")
 	}
@@ -177,7 +171,7 @@ func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error)
 			// Stream messages from the LLM
 			params := openai.ChatCompletionNewParams{
 				Messages: openai.F(a.messages.All()),
-				Model:    openai.F(a.modelName),
+				Model:    openai.F(modelName),
 				StreamOptions: openai.F(openai.ChatCompletionStreamOptionsParam{
 					IncludeUsage: openai.F(true),
 				}),
@@ -186,7 +180,7 @@ func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error)
 				params.Tools = openai.F(a.convertSkillsToTools())
 			}
 			// TODO We need to keep the tool info in the state as well?
-			stream := a.llmClient.Chat.Completions.NewStreaming(context.Background(), params)
+			stream := llmClient.NewStreaming(ctx, params)
 			defer stream.Close()
 			completion := openai.ChatCompletionAccumulator{}
 			for stream.Next() {
@@ -232,7 +226,7 @@ func (a *Agent) Run(userMessage string) (chan openai.ChatCompletionChunk, error)
 					wg.Add(1)
 					go func(skill *Skill, toolID string) {
 						defer wg.Done()
-						result, err := a.skillContextRunner(skill, toolID, clonedMessages)
+						result, err := a.skillContextRunner(ctx, skill, toolID, clonedMessages, llmClient, modelName)
 						if err != nil {
 							a.logger.Error("Error running skill", "error", err)
 							return
