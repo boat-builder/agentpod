@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/boat-builder/agentpod/agentMessage"
 	"github.com/boat-builder/agentpod/agentpod"
-	"github.com/boat-builder/agentpod/agentpod/session"
 	"github.com/boat-builder/agentpod/llm"
 	"github.com/boat-builder/agentpod/memory"
 	"github.com/openai/openai-go"
@@ -82,7 +82,7 @@ func TestSimpleConversation(t *testing.T) {
 	for {
 		out := convSession.Out()
 		finalContent += out.Content
-		if out.Type == session.MessageTypeEnd {
+		if out.Type == agentMessage.MessageTypeEnd {
 			break
 		}
 	}
@@ -123,7 +123,7 @@ func TestConversationWithSkills(t *testing.T) {
 	for {
 		out := convSession.Out()
 		finalContent += out.Content
-		if out.Type == session.MessageTypeEnd {
+		if out.Type == agentMessage.MessageTypeEnd {
 			break
 		}
 	}

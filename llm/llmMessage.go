@@ -32,9 +32,17 @@ func NewMessageList() *MessageList {
 	}
 }
 
+func (ml *MessageList) Len() int {
+	return len(ml.Messages)
+}
+
 // Add appends a new message to the MessageList in a FIFO order.
 func (ml *MessageList) Add(msg openai.ChatCompletionMessageParamUnion) {
 	ml.Messages = append(ml.Messages, msg)
+}
+
+func (ml *MessageList) AddFirst(prompt string) {
+	ml.Messages = append([]openai.ChatCompletionMessageParamUnion{DeveloperMessage(prompt)}, ml.Messages...)
 }
 
 func (ml *MessageList) All() []openai.ChatCompletionMessageParamUnion {

@@ -1,7 +1,4 @@
-// Package session - messages.go
-// Defines data structures for messages exchanged during a session.
-
-package session
+package agentMessage
 
 type MessageType string
 

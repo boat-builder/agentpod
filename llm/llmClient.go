@@ -22,7 +22,7 @@ type LLM struct {
 	client *openai.Client
 }
 
-func NewLLMClient(config *LLMConfig) *LLM {
+func (config *LLMConfig) NewLLMClient() *LLM {
 	var client *openai.Client
 	if config.BaseURL != "" {
 		client = openai.NewClient(option.WithBaseURL(config.BaseURL), option.WithAPIKey(config.APIKey))

@@ -7,133 +7,69 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/boat-builder/agentpod/agent"
+	"github.com/boat-builder/agentpod/agentMessage"
 	"github.com/boat-builder/agentpod/llm"
-	"github.com/boat-builder/agentpod/memory"
-	"github.com/openai/openai-go"
 )
 
 // Session holds ephemeral conversation data & references to global resources.
 type Session struct {
+	Ctx       context.Context
+	Cancel    context.CancelFunc
+	CloseOnce sync.Once
 	userID    string
 	sessionID string
-
-	llm *llm.LLM
-	mem memory.Memory
-	ag  agent.Agent
-
 	// Fields for conversation history, ephemeral context, partial results, etc.
-	inUserChannel  chan string
-	outUserChannel chan Message
+	InUserChannel  chan string
+	OutUserChannel chan agentMessage.Message
+	State          *SessionState
 
+	logger    *slog.Logger
 	modelName string
-
-	// New fields for graceful shutdown
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closeOnce sync.Once
-
-	logger *slog.Logger
-}
-
-// injectIdentifiersIntoContext injects the user ID and session ID into the context.
-func injectIdentifiersIntoContext(ctx context.Context, userID, sessionID string) context.Context {
-	ctx = context.WithValue(ctx, llm.ContextKey("userID"), userID)
-	ctx = context.WithValue(ctx, llm.ContextKey("sessionID"), sessionID)
-	return ctx
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
-func NewSession(ctx context.Context, userID, sessionID string, llmConfig llm.LLMConfig, mem memory.Memory, ag agent.Agent) *Session {
-	ctx = injectIdentifiersIntoContext(ctx, userID, sessionID)
-	llmClient := llm.NewLLMClient(&llmConfig)
-	if ag.GetLogger() == nil {
-		ag.SetLogger(slog.Default())
-	}
+func NewSession(ctx context.Context, userID, sessionID, modelName string) *Session {
+	state := NewSessionState()
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		userID:         userID,
 		sessionID:      sessionID,
-		llm:            llmClient,
-		mem:            mem,
-		ag:             ag,
-		inUserChannel:  make(chan string),
-		outUserChannel: make(chan Message),
-		modelName:      llmConfig.Model,
-		ctx:            ctx,
-		cancel:         cancel,
+		InUserChannel:  make(chan string),
+		OutUserChannel: make(chan agentMessage.Message),
+		Ctx:            ctx,
+		Cancel:         cancel,
 		logger:         slog.Default(),
+		State:          state,
+		modelName:      modelName,
 	}
-	go s.run()
 	return s
 }
 
 // In processes incoming user messages. Could queue or immediately handle them.
 func (s *Session) In(userMessage string) {
-	s.inUserChannel <- userMessage
+	s.InUserChannel <- userMessage
 }
 
 // Out retrieves the next message from the output channel, blocking until a message is available.
-func (s *Session) Out() Message {
-	return <-s.outUserChannel
+func (s *Session) Out() agentMessage.Message {
+	return <-s.OutUserChannel
 }
 
 // Close ends the session lifecycle and releases any resources if needed.
 func (s *Session) Close() {
-	s.closeOnce.Do(func() {
-		s.cancel()
-		close(s.inUserChannel)
+	s.CloseOnce.Do(func() {
+		s.Cancel()
+		close(s.InUserChannel)
 	})
 }
 
-// run is the main loop for the session. It listens for user messages and process here. Although
-// we don't support now, the idea is that session should support interactive mode which is why
-// the input channel exists. Session should hold the control of how to route the messages to whichever agents
-// when we support multiple agents.
-// TODO - handle refusal everywhere
-// TODO - handle other errors like network errors everywhere
-func (s *Session) run() {
-	defer s.Close()
-	select {
-	case <-s.ctx.Done():
-		s.outUserChannel <- Message{Type: MessageTypeEnd}
-	case userMessage, ok := <-s.inUserChannel:
-		if !ok {
-			s.logger.Error("Session input channel closed")
-			s.outUserChannel <- Message{Type: MessageTypeEnd}
-			return
-		}
-		completion := openai.ChatCompletionAccumulator{}
-		outAgentChannel, err := s.ag.Run(s.ctx, userMessage, s.llm, s.modelName)
-		if err != nil {
-			s.outUserChannel <- Message{
-				Content: err.Error(),
-				Type:    MessageTypeError,
-			}
-		}
-		var openAIMessageID string
-		for chunk := range outAgentChannel {
-			// when chunk id is not same as the previous one, it's part of a new message. Reset everything.
-			if chunk.ID != openAIMessageID {
-				openAIMessageID = chunk.ID
-				completion = openai.ChatCompletionAccumulator{}
-			}
-			completion.AddChunk(chunk)
-			// We won't send the message as a "final message" because there can be other streams in progress.
-			// We'll wait for the channel to close
-			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-				s.outUserChannel <- Message{
-					Content: chunk.Choices[0].Delta.Content,
-					Type:    MessageTypePartialText,
-				}
-			}
-		}
-
-		// channel is closed, send the final message
-		s.outUserChannel <- Message{
-			Type: MessageTypeEnd,
-		}
+func (s *Session) WithUserMessage(userMessage string) *Session {
+	// if message history has atleast one message, this should panic
+	if s.State.MessageHistory.Len() > 0 {
+		panic("message history has atleast one message")
 	}
+	s.State.MessageHistory.Add(llm.UserMessage(userMessage))
+	return s
 }
 
 // TokenRates defines cost per million tokens for input and output
