@@ -1,5 +1,5 @@
 // Package agent provides the main Agent orchestrator, which uses LLM & Skills to process data.
-package agent
+package agentpod
 
 import (
 	"context"
@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/boat-builder/agentpod/agentpod/session"
-	"github.com/boat-builder/agentpod/llm"
 	"github.com/openai/openai-go"
 )
 
@@ -50,7 +48,7 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 // because session is the one that tracks a session's life cycle. We still need to figure out how to route
 // the intermediate input messages if "interactive=true" but the whole idea is Agent's will not have to deal
 // with the lifecycle events like interactiveness with the end user which is the abstraction openai.client has
-func (a *Agent) Run(ctx context.Context, session *session.Session, llmClient *llm.LLM, modelName string) (chan openai.ChatCompletionChunk, error) {
+func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, modelName string) (chan openai.ChatCompletionChunk, error) {
 	if a.logger == nil {
 		panic("logger is not set")
 	}
@@ -167,14 +165,14 @@ func (a *Agent) ConvertSkillsToTools() []openai.ChatCompletionToolParam {
 	return tools
 }
 
-func (a *Agent) GenerateSummary(ctx context.Context, messages *llm.MessageList, llmClient *llm.LLM, modelName string) (string, error) {
+func (a *Agent) GenerateSummary(ctx context.Context, messages *MessageList, llmClient *LLM, modelName string) (string, error) {
 	lastUserMessage := messages.LastUserMessageString()
 	if lastUserMessage == "" {
 		return "", fmt.Errorf("no user message found")
 	}
 
 	summaryPrompt := fmt.Sprintf("Summarize the conversation as an answer to the first question: %s", lastUserMessage)
-	messages.Add(llm.DeveloperMessage(summaryPrompt))
+	messages.Add(DeveloperMessage(summaryPrompt))
 
 	completion, err := llmClient.New(
 		ctx,
@@ -189,7 +187,7 @@ func (a *Agent) GenerateSummary(ctx context.Context, messages *llm.MessageList, 
 	return completion.Choices[0].Message.Content, nil
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, parentToolCallID string, clonedMessages *llm.MessageList, llmClient *llm.LLM, modelName string) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, parentToolCallID string, clonedMessages *MessageList, llmClient *LLM, modelName string) (openai.ChatCompletionMessageParamUnion, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 	for {
 		params := openai.ChatCompletionNewParams{

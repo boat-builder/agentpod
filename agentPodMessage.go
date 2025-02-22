@@ -1,4 +1,4 @@
-package agentMessage
+package agentpod
 
 type MessageType string
 

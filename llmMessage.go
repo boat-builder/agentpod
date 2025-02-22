@@ -1,5 +1,5 @@
 // Start of Selection
-package llm
+package agentpod
 
 import "github.com/openai/openai-go"
 

@@ -1,7 +1,7 @@
-// Package session - errors.go
+// Package agentpod - errors.go
 // Defines session-specific errors.
 
-package session
+package agentpod
 
 import "errors"
 

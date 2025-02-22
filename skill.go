@@ -1,7 +1,7 @@
 // Package agent - skill.go
 // Defines the Skill structure, grouping Tools and domain-specific logic.
 
-package agent
+package agentpod
 
 import (
 	"fmt"

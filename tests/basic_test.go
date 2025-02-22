@@ -6,10 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/boat-builder/agentpod/agentMessage"
-	"github.com/boat-builder/agentpod/agentpod"
-	"github.com/boat-builder/agentpod/llm"
-	"github.com/boat-builder/agentpod/memory"
+	"github.com/boat-builder/agentpod"
 	"github.com/openai/openai-go"
 )
 
@@ -62,12 +59,12 @@ func TestSimpleConversation(t *testing.T) {
 		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
 	}
 
-	llmConfig := llm.LLMConfig{
+	llmConfig := agentpod.LLMConfig{
 		BaseURL: config.KeywordsAIEndpoint,
 		APIKey:  config.KeywordsAIAPIKey,
 		Model:   "azure/gpt-4o-mini",
 	}
-	mem := &memory.Zep{}
+	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says.", []agentpod.Skill{})
 
 	pod := agentpod.NewPod(&llmConfig, mem, ai)
@@ -82,7 +79,7 @@ func TestSimpleConversation(t *testing.T) {
 	for {
 		out := convSession.Out()
 		finalContent += out.Content
-		if out.Type == agentMessage.MessageTypeEnd {
+		if out.Type == agentpod.MessageTypeEnd {
 			break
 		}
 	}
@@ -98,12 +95,12 @@ func TestConversationWithSkills(t *testing.T) {
 		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
 	}
 
-	llmConfig := llm.LLMConfig{
+	llmConfig := agentpod.LLMConfig{
 		BaseURL: config.KeywordsAIEndpoint,
 		APIKey:  config.KeywordsAIAPIKey,
 		Model:   "gpt-4o-mini",
 	}
-	mem := &memory.Zep{}
+	mem := &agentpod.Zep{}
 	skill := agentpod.NewSkill("AppleExpert", "You are an expert in apples", []agentpod.Tool{
 		&BestAppleFinder{
 			toolName:    "BestAppleFinder",
@@ -123,7 +120,7 @@ func TestConversationWithSkills(t *testing.T) {
 	for {
 		out := convSession.Out()
 		finalContent += out.Content
-		if out.Type == agentMessage.MessageTypeEnd {
+		if out.Type == agentpod.MessageTypeEnd {
 			break
 		}
 	}

@@ -1,14 +1,11 @@
 // Package session provides the Session struct for per-conversation state,
 // along with methods for handling user messages and producing agent outputs.
-package session
+package agentpod
 
 import (
 	"context"
 	"log/slog"
 	"sync"
-
-	"github.com/boat-builder/agentpod/agentMessage"
-	"github.com/boat-builder/agentpod/llm"
 )
 
 // Session holds ephemeral conversation data & references to global resources.
@@ -20,7 +17,7 @@ type Session struct {
 	sessionID string
 	// Fields for conversation history, ephemeral context, partial results, etc.
 	InUserChannel  chan string
-	OutUserChannel chan agentMessage.Message
+	OutUserChannel chan Message
 	State          *SessionState
 
 	logger    *slog.Logger
@@ -29,16 +26,16 @@ type Session struct {
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
 // TODO - make sure the context is properly managed, propagated
-func NewSession(ctx context.Context, userID, sessionID, modelName string) *Session {
+func newSession(ctx context.Context, userID, sessionID, modelName string) *Session {
 	state := NewSessionState()
 	ctx, cancel := context.WithCancel(ctx)
-	ctx = context.WithValue(ctx, llm.ContextKey("userID"), userID)
-	ctx = context.WithValue(ctx, llm.ContextKey("sessionID"), sessionID)
+	ctx = context.WithValue(ctx, ContextKey("userID"), userID)
+	ctx = context.WithValue(ctx, ContextKey("sessionID"), sessionID)
 	s := &Session{
 		userID:         userID,
 		sessionID:      sessionID,
 		InUserChannel:  make(chan string),
-		OutUserChannel: make(chan agentMessage.Message),
+		OutUserChannel: make(chan Message),
 		Ctx:            ctx,
 		Cancel:         cancel,
 		logger:         slog.Default(),
@@ -54,7 +51,7 @@ func (s *Session) In(userMessage string) {
 }
 
 // Out retrieves the next message from the output channel, blocking until a message is available.
-func (s *Session) Out() agentMessage.Message {
+func (s *Session) Out() Message {
 	return <-s.OutUserChannel
 }
 
@@ -71,7 +68,7 @@ func (s *Session) WithUserMessage(userMessage string) *Session {
 	if s.State.MessageHistory.Len() > 0 {
 		panic("message history has atleast one message")
 	}
-	s.State.MessageHistory.Add(llm.UserMessage(userMessage))
+	s.State.MessageHistory.Add(UserMessage(userMessage))
 	return s
 }
 

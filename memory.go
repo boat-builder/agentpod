@@ -1,5 +1,5 @@
 // Package memory provides an interface for storing and retrieving conversation data.
-package memory
+package agentpod
 
 // Memory is an interface for reading/writing conversation data or other context.
 type Memory interface {
