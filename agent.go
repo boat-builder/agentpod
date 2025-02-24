@@ -4,12 +4,16 @@ package agentpod
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 
 	"github.com/openai/openai-go"
 )
+
+var ignErr *IgnorableError
+var retErr *RetryableError
 
 // Agent orchestrates calls to the LLM, uses Skills/Tools, and determines how to respond.
 type Agent struct {
@@ -187,8 +191,25 @@ func (a *Agent) GenerateSummary(ctx context.Context, messages *MessageList, llmC
 	return completion.Choices[0].Message.Content, nil
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, parentToolCallID string, clonedMessages *MessageList, llmClient *LLM, modelName string) (openai.ChatCompletionMessageParamUnion, error) {
+func MessageWhenToolError(toolCallID string) openai.ChatCompletionToolMessageParam {
+	return openai.ChatCompletionToolMessageParam{
+		Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
+		Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F("Error occurred while running. Do not retry")}}),
+		ToolCallID: openai.F(toolCallID),
+	}
+}
+
+func MessageWhenToolErrorWithRetry(errorString string, toolCallID string) openai.ChatCompletionToolMessageParam {
+	return openai.ChatCompletionToolMessageParam{
+		Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
+		Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(fmt.Sprintf("Error: %s.\nRetry", errorString))}}),
+		ToolCallID: openai.F(toolCallID),
+	}
+}
+
+func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolCallID string, clonedMessages *MessageList, llmClient *LLM, modelName string) (openai.ChatCompletionMessageParamUnion, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
+	// TODO - we need to have some sort of hard limit for the number iterations possible
 	for {
 		params := openai.ChatCompletionNewParams{
 			Messages: openai.F(clonedMessages.All()),
@@ -200,7 +221,8 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, parentTool
 		}
 		completion, err := llmClient.New(ctx, params)
 		if err != nil {
-			return nil, err
+			a.logger.Error("Error calling LLM while running skill", "error", err)
+			return MessageWhenToolErrorWithRetry("Network error", skillToolCallID), err
 		}
 
 		// adding the assistant message to the cloned messages
@@ -221,36 +243,54 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, parentTool
 		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
 			tool, err := skill.GetTool(toolCall.Function.Name)
 			if err != nil {
-				return nil, err
+				a.logger.Error("Error getting tool", "error", err)
+				clonedMessages.Add(MessageWhenToolError(toolCall.ID))
 			}
 			a.logger.Info("Tool", "tool", tool.Name(), "arguments", toolCall.Function.Arguments)
 			arguments := map[string]interface{}{}
 			err = json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments)
 			if err != nil {
-				return nil, err
+				a.logger.Error("Error unmarshalling tool arguments", "error", err)
+				clonedMessages.Add(MessageWhenToolErrorWithRetry(err.Error(), skillToolCallID))
 			}
 			// TODO - model doesn't always generate valid JSON, so we need to validate the arguments and ask LLM to fix if there are errors
 			output, err := tool.Execute(arguments)
-			// TODO - if error comes we should give that back to the LLM to fix it
-			a.logger.Info("Tool output", "output", output)
 			if err != nil {
-				return nil, err
+				a.logger.Error("Error executing tool", "error", err)
+
+				switch {
+				case errors.As(err, &ignErr):
+					// It's an IgnorableError
+					clonedMessages.Add(MessageWhenToolError(toolCall.ID))
+
+				case errors.As(err, &retErr):
+					// It's a RetryableError
+					clonedMessages.Add(MessageWhenToolErrorWithRetry(err.Error(), toolCall.ID))
+
+				default:
+					// Some other error
+					clonedMessages.Add(MessageWhenToolError(toolCall.ID))
+				}
+			} else {
+				clonedMessages.Add(openai.ChatCompletionToolMessageParam{
+					Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
+					Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(output)}}),
+					ToolCallID: openai.F(toolCall.ID),
+				})
 			}
-			clonedMessages.Add(openai.ChatCompletionToolMessageParam{
-				Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-				Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(output)}}),
-				ToolCallID: openai.F(toolCall.ID),
-			})
 		}
 	}
 
+	// TODO - when some sort of error occurs, we should retry but with not the error message. Also, once the retry is success, we don't really
+	// need the error message in the history
 	finalResponse, err := a.GenerateSummary(ctx, clonedMessages, llmClient, modelName)
 	if err != nil {
-		return nil, err
+		a.logger.Error("Error generating summary", "error", err)
+		return MessageWhenToolErrorWithRetry("Error generating summary", skillToolCallID), err
 	}
 	return openai.ChatCompletionToolMessageParam{
 		Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
 		Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(finalResponse)}}),
-		ToolCallID: openai.F(parentToolCallID),
+		ToolCallID: openai.F(skillToolCallID),
 	}, nil
 }

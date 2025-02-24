@@ -52,6 +52,7 @@ func optsWithIds(ctx context.Context, opts []option.RequestOption) []option.Requ
 	return opts
 }
 
+// TODO failures like too long, non-processable etc from the LLM needs to be handled
 func (c *LLM) New(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	opts := []option.RequestOption{}
 	opts = optsWithIds(ctx, opts)
