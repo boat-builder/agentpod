@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,7 +55,7 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 // because session is the one that tracks a session's life cycle. We still need to figure out how to route
 // the intermediate input messages if "interactive=true" but the whole idea is Agent's will not have to deal
 // with the lifecycle events like interactiveness with the end user which is the abstraction openai.client has
-func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, modelName string) (chan openai.ChatCompletionChunk, error) {
+func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, modelName string, send_status_func func(msg string)) (chan openai.ChatCompletionChunk, error) {
 	if a.logger == nil {
 		panic("logger is not set")
 	}
@@ -92,8 +93,13 @@ func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, model
 			}
 		}
 
-		if stream.Err() != nil || len(completion.Choices) == 0 {
+		if stream.Err() != nil {
+			content := "Error occured!"
 			a.logger.Error("Error streaming", "error", stream.Err())
+			if strings.Contains(stream.Err().Error(), "ContentPolicyViolationError") {
+				a.logger.Error("Content policy violation!", "error", stream.Err())
+				content = "Content policy violation! If this was a mistake, please reach out to the support. Consecutive violations may result in a temporary/permanent ban."
+			}
 			id, _ := gonanoid.New()
 			outAgentChannel <- openai.ChatCompletionChunk{
 				ID:          id,
@@ -105,12 +111,18 @@ func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, model
 					{
 						Index: 0,
 						Delta: openai.ChatCompletionChunkChoicesDelta{
-							Content: "Error occurred while streaming",
+							Content: content,
 						},
 						FinishReason: openai.ChatCompletionChunkChoicesFinishReasonStop,
 					},
 				},
 			}
+			return
+		}
+
+		if len(completion.Choices) == 0 {
+			a.logger.Error("No completion choices")
+			return
 		}
 
 		// Check if both tool call and content are non-empty
@@ -122,6 +134,12 @@ func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, model
 
 		// Append the message to our messages
 		session.State.MessageHistory.Add(completion.Choices[0].Message)
+
+		// if no tools are called, we'd just return (content must have already sent to the client through the channel)
+		if completion.Choices[0].Message.ToolCalls == nil {
+			return
+		}
+
 		results := make(map[string]openai.ChatCompletionMessageParamUnion)
 
 		// Process tool calls if they exist
@@ -133,6 +151,9 @@ func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, model
 
 			for _, tool := range toolsToCall {
 				skill, err := a.GetSkill(tool.Function.Name)
+				if skill.StatusMessage != "" {
+					send_status_func(skill.StatusMessage)
+				}
 				if err != nil {
 					a.logger.Error("Error getting skill", "error", err)
 					continue
@@ -141,7 +162,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, model
 				wg.Add(1)
 				go func(skill *Skill, toolID string) {
 					defer wg.Done()
-					result, err := a.SkillContextRunner(ctx, skill, toolID, clonedMessages, llmClient, modelName, outAgentChannel)
+					result, err := a.SkillContextRunner(ctx, skill, toolID, clonedMessages, llmClient, modelName, outAgentChannel, send_status_func)
 					if err != nil {
 						a.logger.Error("Error running skill", "error", err)
 						return
@@ -200,7 +221,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, model
 				}
 			}
 
-		} else {
+		} else if len(completion.Choices[0].Message.ToolCalls) == 1 {
 			// if only one skill is called, we'd need to return the result
 			session.State.MessageHistory.Add(results[completion.Choices[0].Message.ToolCalls[0].ID])
 			resp := results[completion.Choices[0].Message.ToolCalls[0].ID]
@@ -286,7 +307,7 @@ func MessageWhenToolErrorWithRetry(errorString string, toolCallID string) openai
 	}
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolCallID string, clonedMessages *MessageList, llmClient *LLM, modelName string, outAgentChannel chan openai.ChatCompletionChunk) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolCallID string, clonedMessages *MessageList, llmClient *LLM, modelName string, outAgentChannel chan openai.ChatCompletionChunk, send_status_func func(msg string)) (openai.ChatCompletionMessageParamUnion, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 	// TODO - we need to have some sort of hard limit for the number iterations possible
 	// add the skill description to the cloned messages
@@ -327,6 +348,9 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 			if err != nil {
 				a.logger.Error("Error getting tool", "error", err)
 				clonedMessages.Add(MessageWhenToolError(toolCall.ID))
+			}
+			if tool.StatusMessage() != "" {
+				send_status_func(tool.StatusMessage())
 			}
 			a.logger.Info("Tool", "tool", tool.Name(), "arguments", toolCall.Function.Arguments)
 			arguments := map[string]interface{}{}

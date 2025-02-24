@@ -41,6 +41,12 @@ func (p *Pod) NewSession(ctx context.Context, customerID, sessionID string, cust
 // TODO - handle other errors like network errors everywhere
 func (p *Pod) run(sess *Session) {
 	defer sess.Close()
+	send_status_func := func(msg string) {
+		sess.OutUserChannel <- Message{
+			Content: msg,
+			Type:    MessageTypeStatus,
+		}
+	}
 	select {
 	case <-sess.Ctx.Done():
 		sess.OutUserChannel <- Message{Type: MessageTypeEnd}
@@ -51,7 +57,7 @@ func (p *Pod) run(sess *Session) {
 			return
 		}
 		completion := openai.ChatCompletionAccumulator{}
-		outAgentChannel, err := p.Agent.Run(sess.Ctx, sess.WithUserMessage(userMessage), p.llmConfig.NewLLMClient(), p.llmConfig.Model)
+		outAgentChannel, err := p.Agent.Run(sess.Ctx, sess.WithUserMessage(userMessage), p.llmConfig.NewLLMClient(), p.llmConfig.Model, send_status_func)
 		if err != nil {
 			sess.OutUserChannel <- Message{
 				Content: err.Error(),
