@@ -23,6 +23,10 @@ func (b *BestAppleFinder) Description() string {
 	return b.description
 }
 
+func (b *BestAppleFinder) StatusMessage() string {
+	return "Finding the best apple"
+}
+
 func (b *BestAppleFinder) OpenAI() []openai.ChatCompletionToolParam {
 	return []openai.ChatCompletionToolParam{
 		{
