@@ -69,9 +69,10 @@ func TestSimpleConversation(t *testing.T) {
 
 	pod := agentpod.NewPod(&llmConfig, mem, ai)
 	ctx := context.Background()
-	userID := GenerateNewTestID()
+	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
-	convSession := pod.NewSession(ctx, userID, sessionID)
+	userID := GenerateNewTestID()
+	convSession := pod.NewSession(ctx, orgID, sessionID, map[string]string{"user_id": userID})
 
 	convSession.In("test confirmed")
 
@@ -111,9 +112,10 @@ func TestConversationWithSkills(t *testing.T) {
 
 	pod := agentpod.NewPod(&llmConfig, mem, agent)
 	ctx := context.Background()
-	userID := GenerateNewTestID()
+	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
-	convSession := pod.NewSession(ctx, userID, sessionID)
+	userID := GenerateNewTestID()
+	convSession := pod.NewSession(ctx, orgID, sessionID, map[string]string{"user_id": userID})
 
 	convSession.In("Which apple is the best?")
 	var finalContent string

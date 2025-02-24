@@ -231,6 +231,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, parentTool
 			}
 			// TODO - model doesn't always generate valid JSON, so we need to validate the arguments and ask LLM to fix if there are errors
 			output, err := tool.Execute(arguments)
+			// TODO - if error comes we should give that back to the LLM to fix it
 			a.logger.Info("Tool output", "output", output)
 			if err != nil {
 				return nil, err

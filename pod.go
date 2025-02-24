@@ -27,8 +27,8 @@ func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent) *Pod {
 // NewSession creates a new conversation session for a given user and session ID.
 // A session handles a single user message and maintains the internal state of the agents
 // as they interact to generate a response.
-func (p *Pod) NewSession(ctx context.Context, userID, sessionID string) *Session {
-	sess := newSession(ctx, userID, sessionID, p.llmConfig.Model)
+func (p *Pod) NewSession(ctx context.Context, customerID, sessionID string, customMeta map[string]string) *Session {
+	sess := newSession(ctx, customerID, sessionID, customMeta, p.llmConfig.Model)
 	go p.run(sess)
 	return sess
 }

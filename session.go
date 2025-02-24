@@ -13,8 +13,6 @@ type Session struct {
 	Ctx       context.Context
 	Cancel    context.CancelFunc
 	CloseOnce sync.Once
-	userID    string
-	sessionID string
 	// Fields for conversation history, ephemeral context, partial results, etc.
 	InUserChannel  chan string
 	OutUserChannel chan Message
@@ -26,14 +24,13 @@ type Session struct {
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
 // TODO - make sure the context is properly managed, propagated
-func newSession(ctx context.Context, userID, sessionID, modelName string) *Session {
+func newSession(ctx context.Context, customerID, sessionID string, customMeta map[string]string, modelName string) *Session {
 	state := NewSessionState()
 	ctx, cancel := context.WithCancel(ctx)
-	ctx = context.WithValue(ctx, ContextKey("userID"), userID)
+	ctx = context.WithValue(ctx, ContextKey("customerID"), customerID)
 	ctx = context.WithValue(ctx, ContextKey("sessionID"), sessionID)
+	ctx = context.WithValue(ctx, ContextKey("customMeta"), customMeta)
 	s := &Session{
-		userID:         userID,
-		sessionID:      sessionID,
 		InUserChannel:  make(chan string),
 		OutUserChannel: make(chan Message),
 		Ctx:            ctx,
