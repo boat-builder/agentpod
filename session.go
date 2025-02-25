@@ -18,6 +18,10 @@ type Session struct {
 	OutUserChannel chan Message
 	State          *SessionState
 
+	CustomerID string
+	SessionID  string
+	CustomMeta map[string]string
+
 	logger    *slog.Logger
 	modelName string
 }
@@ -38,6 +42,9 @@ func newSession(ctx context.Context, customerID, sessionID string, customMeta ma
 		logger:         slog.Default(),
 		State:          state,
 		modelName:      modelName,
+		CustomerID:     customerID,
+		SessionID:      sessionID,
+		CustomMeta:     customMeta,
 	}
 	return s
 }

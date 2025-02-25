@@ -51,18 +51,68 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 	return nil, fmt.Errorf("skill %s not found", name)
 }
 
+// buildDeveloperMessage takes the user given prompt and add the user information to it.
+func (a *Agent) buildDeveloperMessage(prompt string, userInfo UserInfo) string {
+	prompt = prompt + fmt.Sprintf("\n\nYou are talking to %s.", userInfo.Name)
+	if len(userInfo.CustomMeta) > 0 {
+		prompt += "\nHere is some information about them:\n"
+		for key, value := range userInfo.CustomMeta {
+			prompt += fmt.Sprintf("%s: %s\n", key, value)
+		}
+	}
+	return prompt
+}
+
 // Run returns a stream of chat completion chunks. We don't do the streaming with channels like the session do
 // because session is the one that tracks a session's life cycle. We still need to figure out how to route
 // the intermediate input messages if "interactive=true" but the whole idea is Agent's will not have to deal
 // with the lifecycle events like interactiveness with the end user which is the abstraction openai.client has
-func (a *Agent) Run(ctx context.Context, session *Session, llmClient *LLM, modelName string, send_status_func func(msg string)) (chan openai.ChatCompletionChunk, error) {
+func (a *Agent) Run(
+	ctx context.Context,
+	session *Session,
+	llmClient *LLM,
+	modelName string,
+	send_status_func func(msg string),
+	getConversationHistory func(ctx context.Context, session *Session, limit int, offset int) (MessageList, error),
+	getUserInfo func(ctx context.Context, session *Session) (UserInfo, error),
+) (chan openai.ChatCompletionChunk, error) {
 	if a.logger == nil {
 		panic("logger is not set")
 	}
 	outAgentChannel := make(chan openai.ChatCompletionChunk)
 
+	// at this point, the conversation history can only contain one user message
+	if session.State.MessageHistory.Len() != 1 {
+		a.logger.Error("Conversation history can only contain one user message")
+		return nil, fmt.Errorf("conversation history can only contain one user message")
+	}
+	userMessage := session.State.MessageHistory.All()[0]
+	if _, ok := userMessage.(openai.ChatCompletionUserMessageParam); !ok {
+		a.logger.Error("Conversation history can only contain one user message")
+		return nil, fmt.Errorf("conversation history can only contain one user message")
+	}
+
+	// now clear the history and rebuild it
+	session.State.MessageHistory.Clear()
+
 	// Add the prompt to the message history
-	session.State.MessageHistory.AddFirst(a.prompt)
+	userInfo, err := getUserInfo(ctx, session)
+	if err != nil {
+		a.logger.Error("Error getting user info", "error", err)
+		return nil, err
+	}
+	session.State.MessageHistory.AddFirst(a.buildDeveloperMessage(a.prompt, userInfo))
+
+	// add the last 5 messages to the conversation history
+	conversationHistory, err := getConversationHistory(ctx, session, 6, 1)
+	if err != nil {
+		a.logger.Error("Error getting conversation history", "error", err)
+		return nil, err
+	}
+	for _, msg := range conversationHistory.All() {
+		session.State.MessageHistory.Add(msg)
+	}
+	session.State.MessageHistory.Add(userMessage)
 
 	go func() {
 		defer close(outAgentChannel)

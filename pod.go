@@ -8,19 +8,28 @@ import (
 )
 
 type Pod struct {
-	llmConfig *LLMConfig
-	Mem       Memory
-	Agent     Agent
-	logger    *slog.Logger
+	llmConfig              *LLMConfig
+	Mem                    Memory
+	Agent                  Agent
+	logger                 *slog.Logger
+	getConversationHistory func(ctx context.Context, session *Session, limit int, offset int) (MessageList, error)
+	getUserInfo            func(ctx context.Context, session *Session) (UserInfo, error)
+}
+
+type UserInfo struct {
+	Name       string
+	CustomMeta map[string]string
 }
 
 // NewPod constructs a new Pod with the given resources.
-func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent) *Pod {
+func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent, getConversationHistory func(ctx context.Context, session *Session, limit int, offset int) (MessageList, error), getUserInfo func(ctx context.Context, session *Session) (UserInfo, error)) *Pod {
 	return &Pod{
-		llmConfig: llmConfig,
-		Mem:       mem,
-		Agent:     *ag,
-		logger:    slog.Default(),
+		llmConfig:              llmConfig,
+		Mem:                    mem,
+		Agent:                  *ag,
+		logger:                 slog.Default(),
+		getConversationHistory: getConversationHistory,
+		getUserInfo:            getUserInfo,
 	}
 }
 
@@ -57,7 +66,15 @@ func (p *Pod) run(sess *Session) {
 			return
 		}
 		completion := openai.ChatCompletionAccumulator{}
-		outAgentChannel, err := p.Agent.Run(sess.Ctx, sess.WithUserMessage(userMessage), p.llmConfig.NewLLMClient(), p.llmConfig.Model, send_status_func)
+		outAgentChannel, err := p.Agent.Run(
+			sess.Ctx,
+			sess.WithUserMessage(userMessage),
+			p.llmConfig.NewLLMClient(),
+			p.llmConfig.Model,
+			send_status_func,
+			p.getConversationHistory,
+			p.getUserInfo,
+		)
 		if err != nil {
 			sess.OutUserChannel <- Message{
 				Content: err.Error(),

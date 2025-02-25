@@ -1,7 +1,11 @@
 // Start of Selection
 package agentpod
 
-import "github.com/openai/openai-go"
+import (
+	"fmt"
+
+	"github.com/openai/openai-go"
+)
 
 // We have custom UserMessage/AssistantMessage/DeveloperMessage because openai go sdk currently have openai.DeveloperMessage()
 func UserMessage(content string) openai.ChatCompletionMessageParamUnion {
@@ -45,6 +49,14 @@ func (ml *MessageList) AddFirst(prompt string) {
 	ml.Messages = append([]openai.ChatCompletionMessageParamUnion{DeveloperMessage(prompt)}, ml.Messages...)
 }
 
+func (ml *MessageList) ReplaceAt(index int, newMsg openai.ChatCompletionMessageParamUnion) error {
+	if index < 0 || index >= len(ml.Messages) {
+		return fmt.Errorf("index out of range")
+	}
+	ml.Messages[index] = newMsg
+	return nil
+}
+
 func (ml *MessageList) All() []openai.ChatCompletionMessageParamUnion {
 	return ml.Messages
 }
@@ -67,4 +79,8 @@ func (ml *MessageList) LastUserMessageString() string {
 		}
 	}
 	return ""
+}
+
+func (ml *MessageList) Clear() {
+	ml.Messages = []openai.ChatCompletionMessageParamUnion{}
 }

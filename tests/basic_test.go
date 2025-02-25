@@ -57,6 +57,16 @@ func (b *BestAppleFinder) Execute(args map[string]interface{}) (string, error) {
 	return "green apple", nil
 }
 
+func getConversationHistory(ctx context.Context, session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
+	return agentpod.MessageList{}, nil
+}
+
+func getUserInfo(ctx context.Context, session *agentpod.Session) (agentpod.UserInfo, error) {
+	return agentpod.UserInfo{
+		Name: "John Doe",
+	}, nil
+}
+
 func TestSimpleConversation(t *testing.T) {
 	config := LoadConfig()
 	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
@@ -71,7 +81,7 @@ func TestSimpleConversation(t *testing.T) {
 	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says.", []agentpod.Skill{})
 
-	pod := agentpod.NewPod(&llmConfig, mem, ai)
+	pod := agentpod.NewPod(&llmConfig, mem, ai, getConversationHistory, getUserInfo)
 	ctx := context.Background()
 	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
@@ -114,7 +124,7 @@ func TestConversationWithSkills(t *testing.T) {
 	})
 	agent := agentpod.NewAgent("You are a good farmer", []agentpod.Skill{*skill})
 
-	pod := agentpod.NewPod(&llmConfig, mem, agent)
+	pod := agentpod.NewPod(&llmConfig, mem, agent, getConversationHistory, getUserInfo)
 	ctx := context.Background()
 	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
@@ -132,5 +142,49 @@ func TestConversationWithSkills(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(finalContent), "green apple") {
 		t.Fatal("Expected 'green apple' to be in the final content, got:", finalContent)
+	}
+}
+
+func getNonEmptyConversationHistory(ctx context.Context, session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
+	messages := agentpod.MessageList{}
+	messages.Add(agentpod.UserMessage("Can you tell me which color is apple?"))
+	messages.Add(agentpod.AssistantMessage("The apple is generally red"))
+	return messages, nil
+}
+
+func TestConversationWithHistory(t *testing.T) {
+	config := LoadConfig()
+	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
+		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
+	}
+
+	llmConfig := agentpod.LLMConfig{
+		BaseURL: config.KeywordsAIEndpoint,
+		APIKey:  config.KeywordsAIAPIKey,
+		Model:   "azure/gpt-4o-mini",
+	}
+	mem := &agentpod.Zep{}
+	ai := agentpod.NewAgent("You are an assistant!", []agentpod.Skill{})
+
+	pod := agentpod.NewPod(&llmConfig, mem, ai, getNonEmptyConversationHistory, getUserInfo)
+	ctx := context.Background()
+	orgID := GenerateNewTestID()
+	sessionID := GenerateNewTestID()
+	userID := GenerateNewTestID()
+	convSession := pod.NewSession(ctx, orgID, sessionID, map[string]string{"user_id": userID})
+
+	convSession.In("is it a fruit or a vegetable? Answer in one word without extra punctuation.")
+
+	var finalContent string
+	for {
+		out := convSession.Out()
+		finalContent += out.Content
+		if out.Type == agentpod.MessageTypeEnd {
+			break
+		}
+	}
+
+	if strings.ToLower(finalContent) != "fruit" {
+		t.Fatal("Expected 'fruit', got:", finalContent)
 	}
 }
