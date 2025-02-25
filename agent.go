@@ -211,7 +211,8 @@ func (a *Agent) Run(
 				wg.Add(1)
 				go func(skill *Skill, toolID string) {
 					defer wg.Done()
-					result, err := a.SkillContextRunner(ctx, skill, toolID, clonedMessages, llmClient, modelName, outAgentChannel, send_status_func)
+					// we clone the clonedMessages again so all the go routines gets different message history
+					result, err := a.SkillContextRunner(ctx, skill, toolID, clonedMessages.Clone(), llmClient, modelName, outAgentChannel, send_status_func)
 					if err != nil {
 						a.logger.Error("Error running skill", "error", err)
 						return
@@ -359,12 +360,59 @@ func MessageWhenToolErrorWithRetry(errorString string, toolCallID string) openai
 func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolCallID string, clonedMessages *MessageList, llmClient *LLM, modelName string, outAgentChannel chan openai.ChatCompletionChunk, send_status_func func(msg string)) (openai.ChatCompletionMessageParamUnion, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 	// TODO - we need to have some sort of hard limit for the number iterations possible
-	// add the skill description to the cloned messages
+	// take the first developer message and append the skill.SystemPrompt at the end of it and then call clonedMessages.ReplaceAt(0, DeveloperMessage(skill.SystemPrompt))
+	firstMessage := clonedMessages.All()[0]
+	developerMsg, ok := firstMessage.(openai.ChatCompletionDeveloperMessageParam)
+	if !ok {
+		a.logger.Error("First message is not a developer message")
+		return nil, fmt.Errorf("first message is not a developer message")
+	}
+
+	// Create a new developer message that includes the skill system prompt
+	// Use the DeveloperMessage function to create a fresh message with combined content
+	combinedContent := ""
+	// Extract text from the original developer message
+	for _, part := range developerMsg.Content.Value {
+		combinedContent += part.Text.Value
+	}
+	combinedContent += "\n" + skill.SystemPrompt + "\n" + "Do not hallucinate or make up any information. Only use the tools and the data provided by the tools"
+
+	// Replace the first message with the new combined developer message
+	clonedMessages.ReplaceAt(0, DeveloperMessage(combinedContent))
+
+	// Initial call to have LLM think step by step before executing tools
+	var toolNames []string
+	for _, tool := range skill.Tools {
+		toolNames = append(toolNames, tool.Name())
+	}
+
+	toolsInfo := "Available tools:\n"
+	for _, name := range toolNames {
+		toolsInfo += fmt.Sprintf("- %s\n", name)
+	}
+
+	thinkingPromptText := fmt.Sprintf("Think step by step about how to approach this task. What information do you need? What steps will you take? Please plan your approach carefully. You only have below tools available to you:\n\n%s", toolsInfo)
+	thinkingPrompt := DeveloperMessage(thinkingPromptText)
+	clonedMessages.Add(thinkingPrompt)
+
+	thinkingParams := openai.ChatCompletionNewParams{
+		Messages: openai.F(clonedMessages.All()),
+		Model:    openai.F(modelName),
+	}
+
+	thinkingCompletion, err := llmClient.New(ctx, thinkingParams)
+	if err != nil {
+		a.logger.Error("Error calling LLM for step-by-step thinking", "error", err)
+		return MessageWhenToolErrorWithRetry("Network error", skillToolCallID), err
+	}
+
+	// Add the LLM's thinking to the message history
+	clonedMessages.Add(thinkingCompletion.Choices[0].Message)
+
 	for {
 		// We add a developer message just for this loop (not to the history) to ensure the LLM doesn't output anything except the necessary tool to be called.
-		history := append(clonedMessages.All(), DeveloperMessage("Do not output anything except the necessary tool to be called. If no tools are needed, just say 'No tools needed'"))
 		params := openai.ChatCompletionNewParams{
-			Messages: openai.F(history),
+			Messages: openai.F(clonedMessages.All()),
 			Model:    openai.F(modelName),
 		}
 		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
@@ -376,6 +424,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 			a.logger.Error("Error calling LLM while running skill", "error", err)
 			return MessageWhenToolErrorWithRetry("Network error", skillToolCallID), err
 		}
+		clonedMessages.Add(completion.Choices[0].Message)
 
 		// Check if both tool call and content are non-empty
 		// this won't affect the flow currently but this is not the expectation
@@ -388,9 +437,6 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 		if completion.Choices[0].Message.ToolCalls == nil {
 			break
 		}
-
-		// adding the assistant message to the cloned messages - done after the tool existance check to avoid having the "no tools needed" message
-		clonedMessages.Add(completion.Choices[0].Message)
 
 		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
 			tool, err := skill.GetTool(toolCall.Function.Name)
@@ -435,17 +481,23 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 			}
 		}
 	}
+	allMessages := clonedMessages.All()
+	lastMessage := allMessages[len(allMessages)-1]
+	// If it's a ChatCompletionMessage, convert it to a tool message
+	if chatMsg, ok := lastMessage.(openai.ChatCompletionMessage); ok {
+		content := chatMsg.Content
 
-	// TODO - when some sort of error occurs, we should retry but with not the error message. Also, once the retry is success, we don't really
-	// need the error message in the history
-	finalResponse, err := a.GenerateSummary(ctx, clonedMessages, llmClient, modelName)
-	if err != nil {
-		a.logger.Error("Error generating summary", "error", err)
-		return MessageWhenToolErrorWithRetry("Error generating summary", skillToolCallID), err
+		return openai.ChatCompletionToolMessageParam{
+			Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
+			Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(content)}}),
+			ToolCallID: openai.F(skillToolCallID),
+		}, nil
+	} else {
+		a.logger.Error("Unexpected message type in SkillContextRunner result", "type", fmt.Sprintf("%T", lastMessage))
+		return openai.ChatCompletionToolMessageParam{
+			Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
+			Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F("Error: The skill execution did not produce a valid response")}}),
+			ToolCallID: openai.F(skillToolCallID),
+		}, nil
 	}
-	return openai.ChatCompletionToolMessageParam{
-		Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-		Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(finalResponse)}}),
-		ToolCallID: openai.F(skillToolCallID),
-	}, nil
 }

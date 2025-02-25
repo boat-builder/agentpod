@@ -12,7 +12,8 @@ import (
 // Skill holds a set of tools and a domain-specific prompt/description.
 type Skill struct {
 	Name          string
-	Description   string // could act as a system/context prompt
+	Description   string
+	SystemPrompt  string
 	StatusMessage string
 	Tools         []Tool
 }
