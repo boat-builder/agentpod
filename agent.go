@@ -104,7 +104,7 @@ func (a *Agent) Run(
 	session.State.MessageHistory.AddFirst(a.buildDeveloperMessage(a.prompt, userInfo))
 
 	// add the last 5 messages to the conversation history
-	conversationHistory, err := getConversationHistory(ctx, session, 6, 1)
+	conversationHistory, err := getConversationHistory(ctx, session, 1, 5)
 	if err != nil {
 		a.logger.Error("Error getting conversation history", "error", err)
 		return nil, err
@@ -112,7 +112,6 @@ func (a *Agent) Run(
 	for _, msg := range conversationHistory.All() {
 		session.State.MessageHistory.Add(msg)
 	}
-	session.State.MessageHistory.Add(userMessage)
 
 	go func() {
 		defer close(outAgentChannel)
