@@ -16,7 +16,7 @@ func ConversationContext(getConversationHistory func(ctx context.Context, sessio
 If you think the conversation history doesn't have enough information, you can call getConversationHistory tool with right 
 parameters to get more history.`)
 
-	previous5, err := getConversationHistory(context.Background(), session, 6, 1)
+	previous5, err := getConversationHistory(context.Background(), session, 6, 0)
 	if err != nil {
 		return ""
 	}

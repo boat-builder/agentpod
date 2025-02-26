@@ -116,13 +116,17 @@ func TestConversationWithSkills(t *testing.T) {
 		Model:   "gpt-4o-mini",
 	}
 	mem := &agentpod.Zep{}
-	skill := agentpod.NewSkill("AppleExpert", "You are an expert in apples", []agentpod.Tool{
-		&BestAppleFinder{
-			toolName:    "BestAppleFinder",
-			description: "Find the best apple",
+	skill := agentpod.Skill{
+		Name:        "AppleExpert",
+		Description: "You are an expert in apples",
+		Tools: []agentpod.Tool{
+			&BestAppleFinder{
+				toolName:    "BestAppleFinder",
+				description: "Find the best apple",
+			},
 		},
-	})
-	agent := agentpod.NewAgent("You are a good farmer", []agentpod.Skill{*skill})
+	}
+	agent := agentpod.NewAgent("You are a good farmer", []agentpod.Skill{skill})
 
 	pod := agentpod.NewPod(&llmConfig, mem, agent, getConversationHistory, getUserInfo)
 	ctx := context.Background()

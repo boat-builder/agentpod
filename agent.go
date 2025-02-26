@@ -104,7 +104,7 @@ func (a *Agent) Run(
 	session.State.MessageHistory.AddFirst(a.buildDeveloperMessage(a.prompt, userInfo))
 
 	// add the last 5 messages to the conversation history
-	conversationHistory, err := getConversationHistory(ctx, session, 1, 5)
+	conversationHistory, err := getConversationHistory(ctx, session, 5, 1)
 	if err != nil {
 		a.logger.Error("Error getting conversation history", "error", err)
 		return nil, err
@@ -112,6 +112,8 @@ func (a *Agent) Run(
 	for _, msg := range conversationHistory.All() {
 		session.State.MessageHistory.Add(msg)
 	}
+	// adding the user message as the last message
+	session.State.MessageHistory.Add(userMessage)
 
 	go func() {
 		defer close(outAgentChannel)
@@ -443,6 +445,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 			if err != nil {
 				a.logger.Error("Error getting tool", "error", err)
 				clonedMessages.Add(MessageWhenToolError(toolCall.ID))
+				continue
 			}
 			if tool.StatusMessage() != "" {
 				send_status_func(tool.StatusMessage())
@@ -453,6 +456,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 			if err != nil {
 				a.logger.Error("Error unmarshalling tool arguments", "error", err)
 				clonedMessages.Add(MessageWhenToolErrorWithRetry(err.Error(), skillToolCallID))
+				continue
 			}
 			// TODO - model doesn't always generate valid JSON, so we need to validate the arguments and ask LLM to fix if there are errors
 			output, err := tool.Execute(arguments)
@@ -463,14 +467,15 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 				case errors.As(err, &ignErr):
 					// It's an IgnorableError
 					clonedMessages.Add(MessageWhenToolError(toolCall.ID))
-
+					continue
 				case errors.As(err, &retErr):
 					// It's a RetryableError
-					clonedMessages.Add(MessageWhenToolErrorWithRetry(err.Error(), skillToolCallID))
+					clonedMessages.Add(MessageWhenToolErrorWithRetry(err.Error(), toolCall.ID))
 
 				default:
 					// Some other error
 					clonedMessages.Add(MessageWhenToolError(toolCall.ID))
+					continue
 				}
 			} else {
 				clonedMessages.Add(openai.ChatCompletionToolMessageParam{

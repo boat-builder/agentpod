@@ -12,7 +12,7 @@ type Pod struct {
 	Mem                    Memory
 	Agent                  Agent
 	logger                 *slog.Logger
-	getConversationHistory func(ctx context.Context, session *Session, page int, pageSize int) (MessageList, error)
+	getConversationHistory func(ctx context.Context, session *Session, limit int, offset int) (MessageList, error)
 	getUserInfo            func(ctx context.Context, session *Session) (UserInfo, error)
 }
 
@@ -22,7 +22,7 @@ type UserInfo struct {
 }
 
 // NewPod constructs a new Pod with the given resources.
-func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent, getConversationHistory func(ctx context.Context, session *Session, page int, pageSize int) (MessageList, error), getUserInfo func(ctx context.Context, session *Session) (UserInfo, error)) *Pod {
+func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent, getConversationHistory func(ctx context.Context, session *Session, limit int, offset int) (MessageList, error), getUserInfo func(ctx context.Context, session *Session) (UserInfo, error)) *Pod {
 	return &Pod{
 		llmConfig:              llmConfig,
 		Mem:                    mem,

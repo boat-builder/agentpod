@@ -18,15 +18,6 @@ type Skill struct {
 	Tools         []Tool
 }
 
-// NewSkill constructs a skill with name, description, and a set of tools.
-func NewSkill(name, description string, tools []Tool) *Skill {
-	return &Skill{
-		Name:        name,
-		Description: description,
-		Tools:       tools,
-	}
-}
-
 func (s *Skill) GetTools() []openai.ChatCompletionToolParam {
 	tools := []openai.ChatCompletionToolParam{}
 	for _, tool := range s.Tools {
