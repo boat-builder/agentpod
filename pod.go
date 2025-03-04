@@ -63,6 +63,7 @@ func (p *Pod) run(sess *Session) {
 			sess.OutUserChannel <- Response{Type: ResponseTypeEnd}
 			return
 		}
+		p.storage.CreateConversation(sess, userMessage)
 		completion := openai.ChatCompletionAccumulator{}
 
 		outAgentChannel, err := p.Agent.Run(

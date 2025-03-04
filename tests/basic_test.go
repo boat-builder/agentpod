@@ -64,7 +64,11 @@ func (m *MockStorage) GetConversation(session *agentpod.Session, limit int, offs
 }
 
 // SaveConversation is a no-op for testing
-func (m *MockStorage) SaveConversation(session *agentpod.Session, messages agentpod.MessageList) error {
+func (m *MockStorage) CreateConversation(session *agentpod.Session, userMessage string) error {
+	return nil
+}
+
+func (m *MockStorage) FinishConversation(session *agentpod.Session, assistantMessage string) error {
 	return nil
 }
 
