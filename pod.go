@@ -8,12 +8,11 @@ import (
 )
 
 type Pod struct {
-	llmConfig              *LLMConfig
-	Mem                    Memory
-	Agent                  Agent
-	logger                 *slog.Logger
-	getConversationHistory func(ctx context.Context, session *Session, limit int, offset int) (MessageList, error)
-	getUserInfo            func(ctx context.Context, session *Session) (UserInfo, error)
+	llmConfig *LLMConfig
+	Mem       Memory
+	Agent     Agent
+	logger    *slog.Logger
+	storage   Storage
 }
 
 type UserInfo struct {
@@ -22,14 +21,13 @@ type UserInfo struct {
 }
 
 // NewPod constructs a new Pod with the given resources.
-func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent, getConversationHistory func(ctx context.Context, session *Session, limit int, offset int) (MessageList, error), getUserInfo func(ctx context.Context, session *Session) (UserInfo, error)) *Pod {
+func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent, storage Storage) *Pod {
 	return &Pod{
-		llmConfig:              llmConfig,
-		Mem:                    mem,
-		Agent:                  *ag,
-		logger:                 slog.Default(),
-		getConversationHistory: getConversationHistory,
-		getUserInfo:            getUserInfo,
+		llmConfig: llmConfig,
+		Mem:       mem,
+		Agent:     *ag,
+		logger:    slog.Default(),
+		storage:   storage,
 	}
 }
 
@@ -51,34 +49,34 @@ func (p *Pod) NewSession(ctx context.Context, customerID, sessionID string, cust
 func (p *Pod) run(sess *Session) {
 	defer sess.Close()
 	send_status_func := func(msg string) {
-		sess.OutUserChannel <- Message{
+		sess.OutUserChannel <- Response{
 			Content: msg,
-			Type:    MessageTypeStatus,
+			Type:    ResponseTypeStatus,
 		}
 	}
 	select {
 	case <-sess.Ctx.Done():
-		sess.OutUserChannel <- Message{Type: MessageTypeEnd}
+		sess.OutUserChannel <- Response{Type: ResponseTypeEnd}
 	case userMessage, ok := <-sess.InUserChannel:
 		if !ok {
 			p.logger.Error("Session input channel closed")
-			sess.OutUserChannel <- Message{Type: MessageTypeEnd}
+			sess.OutUserChannel <- Response{Type: ResponseTypeEnd}
 			return
 		}
 		completion := openai.ChatCompletionAccumulator{}
+
 		outAgentChannel, err := p.Agent.Run(
 			sess.Ctx,
 			sess.WithUserMessage(userMessage),
 			p.llmConfig.NewLLMClient(),
 			p.llmConfig.Model,
 			send_status_func,
-			p.getConversationHistory,
-			p.getUserInfo,
+			p.storage,
 		)
 		if err != nil {
-			sess.OutUserChannel <- Message{
+			sess.OutUserChannel <- Response{
 				Content: err.Error(),
-				Type:    MessageTypeError,
+				Type:    ResponseTypeError,
 			}
 		}
 		var openAIMessageID string
@@ -92,16 +90,16 @@ func (p *Pod) run(sess *Session) {
 			// We won't send the message as a "final message" because there can be other streams in progress.
 			// We'll wait for the channel to close
 			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-				sess.OutUserChannel <- Message{
+				sess.OutUserChannel <- Response{
 					Content: chunk.Choices[0].Delta.Content,
-					Type:    MessageTypePartialText,
+					Type:    ResponseTypePartialText,
 				}
 			}
 		}
 
 		// channel is closed, send the final message
-		sess.OutUserChannel <- Message{
-			Type: MessageTypeEnd,
+		sess.OutUserChannel <- Response{
+			Type: ResponseTypeEnd,
 		}
 	}
 }

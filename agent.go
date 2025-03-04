@@ -63,244 +63,355 @@ func (a *Agent) buildDeveloperMessage(prompt string, userInfo UserInfo) string {
 	return prompt
 }
 
-// Run returns a stream of chat completion chunks. We don't do the streaming with channels like the session do
-// because session is the one that tracks a session's life cycle. We still need to figure out how to route
-// the intermediate input messages if "interactive=true" but the whole idea is Agent's will not have to deal
-// with the lifecycle events like interactiveness with the end user which is the abstraction openai.client has
+// Run processes a user message through the LLM, executes any requested skills,
+// and returns a channel of completion chunks.
 func (a *Agent) Run(
 	ctx context.Context,
 	session *Session,
 	llmClient *LLM,
 	modelName string,
 	send_status_func func(msg string),
-	getConversationHistory func(ctx context.Context, session *Session, limit int, offset int) (MessageList, error),
-	getUserInfo func(ctx context.Context, session *Session) (UserInfo, error),
+	storage Storage,
 ) (chan openai.ChatCompletionChunk, error) {
 	if a.logger == nil {
 		panic("logger is not set")
 	}
 	outAgentChannel := make(chan openai.ChatCompletionChunk)
 
+	// Validate session state
+	if err := a.validateSessionState(session); err != nil {
+		return nil, err
+	}
+
+	// Prepare session message history
+	if err := a.prepareMessageHistory(ctx, session, storage); err != nil {
+		return nil, err
+	}
+
+	// Process the request asynchronously
+	go a.processRequest(ctx, session, llmClient, modelName, outAgentChannel, send_status_func)
+
+	return outAgentChannel, nil
+}
+
+// validateSessionState ensures the session contains exactly one user message
+func (a *Agent) validateSessionState(session *Session) error {
 	// at this point, the conversation history can only contain one user message
 	if session.State.MessageHistory.Len() != 1 {
 		a.logger.Error("Conversation history can only contain one user message")
-		return nil, fmt.Errorf("conversation history can only contain one user message")
+		return fmt.Errorf("conversation history can only contain one user message")
 	}
 	userMessage := session.State.MessageHistory.All()[0]
 	if _, ok := userMessage.(openai.ChatCompletionUserMessageParam); !ok {
 		a.logger.Error("Conversation history can only contain one user message")
-		return nil, fmt.Errorf("conversation history can only contain one user message")
+		return fmt.Errorf("conversation history can only contain one user message")
 	}
+	return nil
+}
 
-	// now clear the history and rebuild it
+// prepareMessageHistory builds the message history for the LLM request
+func (a *Agent) prepareMessageHistory(
+	ctx context.Context,
+	session *Session,
+	storage Storage,
+) error {
+	// Get the user message before clearing
+	userMessage := session.State.MessageHistory.All()[0]
+
+	// Clear the history and rebuild it
 	session.State.MessageHistory.Clear()
 
 	// Add the prompt to the message history
-	userInfo, err := getUserInfo(ctx, session)
+	userInfo, err := storage.GetUserInfo(session)
 	if err != nil {
 		a.logger.Error("Error getting user info", "error", err)
-		return nil, err
+		return err
 	}
 	session.State.MessageHistory.AddFirst(a.buildDeveloperMessage(a.prompt, userInfo))
 
 	// add the last 5 messages to the conversation history
-	conversationHistory, err := getConversationHistory(ctx, session, 5, 1)
+	conversationHistory, err := storage.GetConversation(session, 5, 1)
 	if err != nil {
 		a.logger.Error("Error getting conversation history", "error", err)
-		return nil, err
+		return err
 	}
 	for _, msg := range conversationHistory.All() {
 		session.State.MessageHistory.Add(msg)
 	}
+
 	// adding the user message as the last message
 	session.State.MessageHistory.Add(userMessage)
+	return nil
+}
 
-	go func() {
-		defer close(outAgentChannel)
-		// cloning the message before appending the latest assistant message
-		clonedMessages := session.State.MessageHistory.Clone()
+// processRequest handles the main logic for processing a request
+func (a *Agent) processRequest(
+	ctx context.Context,
+	session *Session,
+	llmClient *LLM,
+	modelName string,
+	outAgentChannel chan openai.ChatCompletionChunk,
+	send_status_func func(msg string),
+) {
+	defer close(outAgentChannel)
 
-		params := openai.ChatCompletionNewParams{
-			Messages: openai.F(session.State.MessageHistory.All()),
-			Model:    openai.F(modelName),
-			StreamOptions: openai.F(openai.ChatCompletionStreamOptionsParam{
-				IncludeUsage: openai.F(true),
-			}),
+	// Clone the messages before appending the latest assistant message
+	clonedMessages := session.State.MessageHistory.Clone()
+
+	// Get initial response from LLM
+	completion, err := a.getInitialLLMResponse(ctx, session, llmClient, modelName, outAgentChannel)
+	if err != nil {
+		a.handleLLMError(err, modelName, outAgentChannel)
+		return
+	}
+
+	// If no tool calls were requested, we're done
+	if completion.Choices[0].Message.ToolCalls == nil {
+		return
+	}
+
+	// Process tool calls if requested
+	results := a.processToolCalls(ctx, completion, clonedMessages, llmClient, modelName, outAgentChannel, send_status_func)
+
+	// Handle results based on number of tool calls
+	a.handleToolCallResults(completion, results, session, llmClient, modelName, outAgentChannel)
+}
+
+// getInitialLLMResponse gets the initial response from the LLM
+func (a *Agent) getInitialLLMResponse(
+	ctx context.Context,
+	session *Session,
+	llmClient *LLM,
+	modelName string,
+	outAgentChannel chan openai.ChatCompletionChunk,
+) (openai.ChatCompletionAccumulator, error) {
+	params := openai.ChatCompletionNewParams{
+		Messages: openai.F(session.State.MessageHistory.All()),
+		Model:    openai.F(modelName),
+		StreamOptions: openai.F(openai.ChatCompletionStreamOptionsParam{
+			IncludeUsage: openai.F(true),
+		}),
+	}
+	if len(a.ConvertSkillsToTools()) > 0 {
+		params.Tools = openai.F(a.ConvertSkillsToTools())
+	}
+
+	stream := llmClient.NewStreaming(ctx, params)
+	defer stream.Close()
+
+	completion := openai.ChatCompletionAccumulator{}
+	for stream.Next() {
+		chunk := stream.Current()
+		if chunk.Choices[0].Delta.Content != "" {
+			outAgentChannel <- chunk
 		}
-		if len(a.ConvertSkillsToTools()) > 0 {
-			params.Tools = openai.F(a.ConvertSkillsToTools())
+		completion.AddChunk(chunk)
+		if _, finished := completion.JustFinishedContent(); finished {
+			break
 		}
-		stream := llmClient.NewStreaming(ctx, params)
-		defer stream.Close()
-		completion := openai.ChatCompletionAccumulator{}
-		for stream.Next() {
-			chunk := stream.Current()
-			if chunk.Choices[0].Delta.Content != "" {
-				outAgentChannel <- chunk
-			}
-			completion.AddChunk(chunk)
-			if _, finished := completion.JustFinishedContent(); finished {
-				break
-			}
+	}
+
+	if stream.Err() != nil {
+		return completion, stream.Err()
+	}
+
+	if len(completion.Choices) == 0 {
+		a.logger.Error("No completion choices")
+		return completion, fmt.Errorf("no completion choices")
+	}
+
+	// Check if both tool call and content are non-empty
+	bothToolCallAndContent := completion.Choices[0].Message.ToolCalls != nil && completion.Choices[0].Message.Content != ""
+	if bothToolCallAndContent {
+		a.logger.Error("Expectation is that both tool call and content are both non-empty")
+	}
+
+	// Append the message to our messages
+	session.State.MessageHistory.Add(completion.Choices[0].Message)
+
+	return completion, nil
+}
+
+// handleLLMError handles errors from LLM API calls
+func (a *Agent) handleLLMError(err error, modelName string, outAgentChannel chan openai.ChatCompletionChunk) {
+	content := "Error occurred!"
+	a.logger.Error("Error streaming", "error", err)
+	if strings.Contains(err.Error(), "ContentPolicyViolationError") {
+		a.logger.Error("Content policy violation!", "error", err)
+		content = "Content policy violation! If this was a mistake, please reach out to the support. Consecutive violations may result in a temporary/permanent ban."
+	}
+	id, _ := gonanoid.New()
+	outAgentChannel <- openai.ChatCompletionChunk{
+		ID:          id,
+		Created:     time.Now().Unix(),
+		Model:       modelName,
+		Object:      "chat.completion.chunk",
+		ServiceTier: "standard",
+		Choices: []openai.ChatCompletionChunkChoice{
+			{
+				Index: 0,
+				Delta: openai.ChatCompletionChunkChoicesDelta{
+					Content: content,
+				},
+				FinishReason: openai.ChatCompletionChunkChoicesFinishReasonStop,
+			},
+		},
+	}
+}
+
+// processToolCalls processes any tool calls requested by the LLM
+func (a *Agent) processToolCalls(
+	ctx context.Context,
+	completion openai.ChatCompletionAccumulator,
+	clonedMessages *MessageList,
+	llmClient *LLM,
+	modelName string,
+	outAgentChannel chan openai.ChatCompletionChunk,
+	send_status_func func(msg string),
+) map[string]openai.ChatCompletionMessageParamUnion {
+	results := make(map[string]openai.ChatCompletionMessageParamUnion)
+
+	if completion.Choices[0].Message.ToolCalls == nil {
+		return results
+	}
+
+	toolsToCall := completion.Choices[0].Message.ToolCalls
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, tool := range toolsToCall {
+		skill, err := a.GetSkill(tool.Function.Name)
+		if err != nil {
+			a.logger.Error("Error getting skill", "error", err)
+			continue
 		}
 
-		if stream.Err() != nil {
-			content := "Error occured!"
-			a.logger.Error("Error streaming", "error", stream.Err())
-			if strings.Contains(stream.Err().Error(), "ContentPolicyViolationError") {
-				a.logger.Error("Content policy violation!", "error", stream.Err())
-				content = "Content policy violation! If this was a mistake, please reach out to the support. Consecutive violations may result in a temporary/permanent ban."
+		if skill.StatusMessage != "" {
+			send_status_func(skill.StatusMessage)
+		}
+
+		wg.Add(1)
+		go func(skill *Skill, toolID string) {
+			defer wg.Done()
+			// Clone the messages again so all goroutines get different message history
+			result, err := a.SkillContextRunner(ctx, skill, toolID, clonedMessages.Clone(), llmClient, modelName, outAgentChannel, send_status_func)
+			if err != nil {
+				a.logger.Error("Error running skill", "error", err)
+				return
 			}
-			id, _ := gonanoid.New()
-			outAgentChannel <- openai.ChatCompletionChunk{
-				ID:          id,
-				Created:     time.Now().Unix(),
-				Model:       modelName,
-				Object:      "chat.completion.chunk",
-				ServiceTier: "standard",
-				Choices: []openai.ChatCompletionChunkChoice{
-					{
-						Index: 0,
-						Delta: openai.ChatCompletionChunkChoicesDelta{
-							Content: content,
-						},
-						FinishReason: openai.ChatCompletionChunkChoicesFinishReasonStop,
+
+			mu.Lock()
+			results[toolID] = result
+			mu.Unlock()
+		}(skill, tool.ID)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// handleToolCallResults handles the results of tool calls
+func (a *Agent) handleToolCallResults(
+	completion openai.ChatCompletionAccumulator,
+	results map[string]openai.ChatCompletionMessageParamUnion,
+	session *Session,
+	llmClient *LLM,
+	modelName string,
+	outAgentChannel chan openai.ChatCompletionChunk,
+) {
+	// If multiple skills were called, summarize the results
+	if len(completion.Choices[0].Message.ToolCalls) > 1 {
+		a.summarizeMultipleToolResults(results, session, llmClient, modelName, outAgentChannel)
+	} else if len(completion.Choices[0].Message.ToolCalls) == 1 {
+		// If only one skill was called, return the result directly
+		a.returnSingleToolResult(completion, results, session, modelName, outAgentChannel)
+	}
+}
+
+// summarizeMultipleToolResults summarizes results when multiple tools were called
+func (a *Agent) summarizeMultipleToolResults(
+	results map[string]openai.ChatCompletionMessageParamUnion,
+	session *Session,
+	llmClient *LLM,
+	modelName string,
+	outAgentChannel chan openai.ChatCompletionChunk,
+) {
+	// Prepare the results for the OpenAI API call
+	for _, result := range results {
+		session.State.MessageHistory.Add(result)
+	}
+
+	params := openai.ChatCompletionNewParams{
+		Messages: openai.F(session.State.MessageHistory.All()),
+		Model:    openai.F(modelName),
+		StreamOptions: openai.F(openai.ChatCompletionStreamOptionsParam{
+			IncludeUsage: openai.F(true),
+		}),
+	}
+
+	stream := llmClient.NewStreaming(context.Background(), params)
+	defer stream.Close()
+
+	for stream.Next() {
+		chunk := stream.Current()
+		if chunk.Choices[0].Delta.Content != "" {
+			outAgentChannel <- chunk
+		}
+	}
+
+	if stream.Err() != nil {
+		a.logger.Error("Error streaming", "error", stream.Err())
+		id, _ := gonanoid.New()
+		outAgentChannel <- openai.ChatCompletionChunk{
+			ID:      id,
+			Created: time.Now().Unix(),
+			Model:   modelName,
+			Object:  "chat.completion.chunk",
+			Choices: []openai.ChatCompletionChunkChoice{
+				{
+					Index: 0,
+					Delta: openai.ChatCompletionChunkChoicesDelta{
+						Content: "Error occurred while streaming",
+					},
+					FinishReason: openai.ChatCompletionChunkChoicesFinishReasonStop,
+				},
+			},
+		}
+	}
+}
+
+// returnSingleToolResult returns the result when only one tool was called
+func (a *Agent) returnSingleToolResult(
+	completion openai.ChatCompletionAccumulator,
+	results map[string]openai.ChatCompletionMessageParamUnion,
+	session *Session,
+	modelName string,
+	outAgentChannel chan openai.ChatCompletionChunk,
+) {
+	// If only one skill is called, return the result directly
+	toolCallID := completion.Choices[0].Message.ToolCalls[0].ID
+	session.State.MessageHistory.Add(results[toolCallID])
+	resp := results[toolCallID]
+
+	id, _ := gonanoid.New()
+	if message, ok := resp.(openai.ChatCompletionToolMessageParam); ok {
+		outAgentChannel <- openai.ChatCompletionChunk{
+			ID:      id,
+			Created: time.Now().Unix(),
+			Model:   modelName,
+			Object:  "chat.completion.chunk",
+			Choices: []openai.ChatCompletionChunkChoice{
+				{
+					Index: 0,
+					Delta: openai.ChatCompletionChunkChoicesDelta{
+						Content: message.Content.Value[0].Text.Value,
 					},
 				},
-			}
-			return
+			},
 		}
-
-		if len(completion.Choices) == 0 {
-			a.logger.Error("No completion choices")
-			return
-		}
-
-		// Check if both tool call and content are non-empty
-		// this won't affect the flow currently but this is not the expectation
-		bothToolCallAndContent := completion.Choices[0].Message.ToolCalls != nil && completion.Choices[0].Message.Content != ""
-		if bothToolCallAndContent {
-			a.logger.Error("Expectation is that both tool call and content are both non-empty")
-		}
-
-		// Append the message to our messages
-		session.State.MessageHistory.Add(completion.Choices[0].Message)
-
-		// if no tools are called, we'd just return (content must have already sent to the client through the channel)
-		if completion.Choices[0].Message.ToolCalls == nil {
-			return
-		}
-
-		results := make(map[string]openai.ChatCompletionMessageParamUnion)
-
-		// Process tool calls if they exist
-		if completion.Choices[0].Message.ToolCalls != nil {
-			toolsToCall := completion.Choices[0].Message.ToolCalls
-
-			var wg sync.WaitGroup
-			var mu sync.Mutex
-
-			for _, tool := range toolsToCall {
-				skill, err := a.GetSkill(tool.Function.Name)
-				if skill.StatusMessage != "" {
-					send_status_func(skill.StatusMessage)
-				}
-				if err != nil {
-					a.logger.Error("Error getting skill", "error", err)
-					continue
-				}
-
-				wg.Add(1)
-				go func(skill *Skill, toolID string) {
-					defer wg.Done()
-					// we clone the clonedMessages again so all the go routines gets different message history
-					result, err := a.SkillContextRunner(ctx, skill, toolID, clonedMessages.Clone(), llmClient, modelName, outAgentChannel, send_status_func)
-					if err != nil {
-						a.logger.Error("Error running skill", "error", err)
-						return
-					}
-
-					mu.Lock()
-					// TODO - we need to handle the case where the tool call is not successful
-					results[toolID] = result
-					mu.Unlock()
-				}(skill, tool.ID)
-			}
-
-			wg.Wait()
-
-		}
-
-		// if multiple skills are called, we'd need to summarize the results - without passing any tools
-		if len(completion.Choices[0].Message.ToolCalls) > 1 {
-			// Prepare the results for the OpenAI API call
-			for _, result := range results {
-				session.State.MessageHistory.Add(result)
-			}
-			params := openai.ChatCompletionNewParams{
-				Messages: openai.F(session.State.MessageHistory.All()),
-				Model:    openai.F(modelName),
-				StreamOptions: openai.F(openai.ChatCompletionStreamOptionsParam{
-					IncludeUsage: openai.F(true),
-				}),
-			}
-			stream := llmClient.NewStreaming(ctx, params)
-			defer stream.Close()
-			for stream.Next() {
-				chunk := stream.Current()
-				if chunk.Choices[0].Delta.Content != "" {
-					outAgentChannel <- chunk
-				}
-			}
-
-			if stream.Err() != nil || len(completion.Choices) == 0 {
-				a.logger.Error("Error streaming", "error", stream.Err())
-				id, _ := gonanoid.New()
-				outAgentChannel <- openai.ChatCompletionChunk{
-					ID:      id,
-					Created: time.Now().Unix(),
-					Model:   modelName,
-					Object:  "chat.completion.chunk",
-					Choices: []openai.ChatCompletionChunkChoice{
-						{
-							Index: 0,
-							Delta: openai.ChatCompletionChunkChoicesDelta{
-								Content: "Error occurred while streaming",
-							},
-							FinishReason: openai.ChatCompletionChunkChoicesFinishReasonStop,
-						},
-					},
-				}
-			}
-
-		} else if len(completion.Choices[0].Message.ToolCalls) == 1 {
-			// if only one skill is called, we'd need to return the result
-			session.State.MessageHistory.Add(results[completion.Choices[0].Message.ToolCalls[0].ID])
-			resp := results[completion.Choices[0].Message.ToolCalls[0].ID]
-			id, _ := gonanoid.New()
-			if message, ok := resp.(openai.ChatCompletionToolMessageParam); ok {
-				outAgentChannel <- openai.ChatCompletionChunk{
-					ID:      id,
-					Created: time.Now().Unix(),
-					Model:   modelName,
-					Object:  "chat.completion.chunk",
-					Choices: []openai.ChatCompletionChunkChoice{
-						{
-							Index: 0,
-							Delta: openai.ChatCompletionChunkChoicesDelta{
-								Content: message.Content.Value[0].Text.Value,
-							},
-						},
-					},
-				}
-			} else {
-				a.logger.Error("Unexpected message type")
-			}
-		}
-
-	}()
-
-	return outAgentChannel, nil
+	} else {
+		a.logger.Error("Unexpected message type")
+	}
 }
 
 // TODO - we probably need to have a custom made description for the tool that uses skill.description

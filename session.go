@@ -15,7 +15,7 @@ type Session struct {
 	CloseOnce sync.Once
 	// Fields for conversation history, ephemeral context, partial results, etc.
 	InUserChannel  chan string
-	OutUserChannel chan Message
+	OutUserChannel chan Response
 	State          *SessionState
 
 	CustomerID string
@@ -36,7 +36,7 @@ func newSession(ctx context.Context, customerID, sessionID string, customMeta ma
 	ctx = context.WithValue(ctx, ContextKey("customMeta"), customMeta)
 	s := &Session{
 		InUserChannel:  make(chan string),
-		OutUserChannel: make(chan Message),
+		OutUserChannel: make(chan Response),
 		Ctx:            ctx,
 		Cancel:         cancel,
 		logger:         slog.Default(),
@@ -55,7 +55,7 @@ func (s *Session) In(userMessage string) {
 }
 
 // Out retrieves the next message from the output channel, blocking until a message is available.
-func (s *Session) Out() Message {
+func (s *Session) Out() Response {
 	return <-s.OutUserChannel
 }
 

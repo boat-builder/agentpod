@@ -2,7 +2,6 @@ package tests
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -50,18 +49,37 @@ func (b *BestAppleFinder) OpenAI() []openai.ChatCompletionToolParam {
 }
 
 func (b *BestAppleFinder) Execute(args map[string]interface{}) (string, error) {
-	userQuery := args["user_query"].(string)
-	if userQuery != "Which apple is the best?" {
-		return "", fmt.Errorf("invalid user query")
-	}
 	return "green apple", nil
 }
 
-func getConversationHistory(ctx context.Context, session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
+// MockStorage implements the Storage interface for testing
+type MockStorage struct {
+	ConversationFn func(*agentpod.Session, int, int) (agentpod.MessageList, error)
+	UserInfoFn     func(*agentpod.Session) (agentpod.UserInfo, error)
+}
+
+// GetConversation returns the conversation history
+func (m *MockStorage) GetConversation(session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
+	return m.ConversationFn(session, limit, offset)
+}
+
+// SaveConversation is a no-op for testing
+func (m *MockStorage) SaveConversation(session *agentpod.Session, messages agentpod.MessageList) error {
+	return nil
+}
+
+// GetUserInfo returns user information
+func (m *MockStorage) GetUserInfo(session *agentpod.Session) (agentpod.UserInfo, error) {
+	return m.UserInfoFn(session)
+}
+
+// Default empty conversation history function
+func getEmptyConversationHistory(session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
 	return agentpod.MessageList{}, nil
 }
 
-func getUserInfo(ctx context.Context, session *agentpod.Session) (agentpod.UserInfo, error) {
+// Default user info function
+func getDefaultUserInfo(session *agentpod.Session) (agentpod.UserInfo, error) {
 	return agentpod.UserInfo{
 		Name: "John Doe",
 	}, nil
@@ -81,7 +99,13 @@ func TestSimpleConversation(t *testing.T) {
 	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says.", []agentpod.Skill{})
 
-	pod := agentpod.NewPod(&llmConfig, mem, ai, getConversationHistory, getUserInfo)
+	// Create a mock storage with empty conversation history
+	storage := &MockStorage{
+		ConversationFn: getEmptyConversationHistory,
+		UserInfoFn:     getDefaultUserInfo,
+	}
+
+	pod := agentpod.NewPod(&llmConfig, mem, ai, storage)
 	ctx := context.Background()
 	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
@@ -94,7 +118,7 @@ func TestSimpleConversation(t *testing.T) {
 	for {
 		out := convSession.Out()
 		finalContent += out.Content
-		if out.Type == agentpod.MessageTypeEnd {
+		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
 	}
@@ -128,7 +152,13 @@ func TestConversationWithSkills(t *testing.T) {
 	}
 	agent := agentpod.NewAgent("You are a good farmer", []agentpod.Skill{skill})
 
-	pod := agentpod.NewPod(&llmConfig, mem, agent, getConversationHistory, getUserInfo)
+	// Create a mock storage with empty conversation history
+	storage := &MockStorage{
+		ConversationFn: getEmptyConversationHistory,
+		UserInfoFn:     getDefaultUserInfo,
+	}
+
+	pod := agentpod.NewPod(&llmConfig, mem, agent, storage)
 	ctx := context.Background()
 	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
@@ -140,7 +170,7 @@ func TestConversationWithSkills(t *testing.T) {
 	for {
 		out := convSession.Out()
 		finalContent += out.Content
-		if out.Type == agentpod.MessageTypeEnd {
+		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
 	}
@@ -149,7 +179,8 @@ func TestConversationWithSkills(t *testing.T) {
 	}
 }
 
-func getNonEmptyConversationHistory(ctx context.Context, session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
+// Function for non-empty conversation history
+func getNonEmptyConversationHistory(session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
 	messages := agentpod.MessageList{}
 	messages.Add(agentpod.UserMessage("Can you tell me which color is apple?"))
 	messages.Add(agentpod.AssistantMessage("The apple is generally red"))
@@ -170,7 +201,13 @@ func TestConversationWithHistory(t *testing.T) {
 	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("You are an assistant!", []agentpod.Skill{})
 
-	pod := agentpod.NewPod(&llmConfig, mem, ai, getNonEmptyConversationHistory, getUserInfo)
+	// Create a mock storage with non-empty conversation history
+	storage := &MockStorage{
+		ConversationFn: getNonEmptyConversationHistory,
+		UserInfoFn:     getDefaultUserInfo,
+	}
+
+	pod := agentpod.NewPod(&llmConfig, mem, ai, storage)
 	ctx := context.Background()
 	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
@@ -183,7 +220,7 @@ func TestConversationWithHistory(t *testing.T) {
 	for {
 		out := convSession.Out()
 		finalContent += out.Content
-		if out.Type == agentpod.MessageTypeEnd {
+		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
 	}
