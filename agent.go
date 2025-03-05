@@ -51,8 +51,8 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 	return nil, fmt.Errorf("skill %s not found", name)
 }
 
-// buildDeveloperMessage takes the user given prompt and add the user information to it.
-func (a *Agent) buildDeveloperMessage(prompt string, userInfo UserInfo) string {
+// buildFirstDeveloperMessage takes the user given prompt and add the user information to it.
+func (a *Agent) buildFirstDeveloperMessage(prompt string, userInfo UserInfo) string {
 	prompt = prompt + fmt.Sprintf("\n\nYou are talking to %s.", userInfo.Name)
 	if len(userInfo.CustomMeta) > 0 {
 		prompt += "\nHere is some information about them:\n"
@@ -129,7 +129,7 @@ func (a *Agent) compileContext(
 
 	// Clear the history and rebuild it
 	session.State.MessageHistory.Clear()
-	session.State.MessageHistory.AddFirst(a.buildDeveloperMessage(a.prompt, userInfo))
+	session.State.MessageHistory.AddFirst(a.buildFirstDeveloperMessage(a.prompt, userInfo))
 	session.State.MessageHistory.Add(conversationHistory.All()...)
 	session.State.MessageHistory.Add(userMessage)
 	return nil

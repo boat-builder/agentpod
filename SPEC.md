@@ -2,8 +2,11 @@
 
 ## 1. Introduction
 
-AgentPod is an AI agent framework that uses a session-based interaction model. Each user message in the chat window initiates a new session, which handles input processing, context management via memory, and agent coordination. The session ends once a final response is delivered to the user.
+AgentPod is an AI agent framework built around a session-based interaction model. Each user message initiates a new session that manages the entire interaction lifecycle - from input processing and context management to agent coordination and response delivery.
 
+The framework is heavily inspired by and built upon OpenAI's [model spec](https://model-spec.openai.com/2025-02-12.html). AgentPod assumes that the user of this framework uses OpenAI models (that follow this specification). While using another model is not discouraged and it is technicaly compatibile, it may introduce behavioral considerations that developers should be aware of, including potential security implications. As of this writing, OpenAI is the only provider with a published model spec that their models are trained against, so we recommend using OpenAI models exclusively.
+
+Here's a simple example of AgentPod initialization and usage:
 
 ```go
 // initialization
@@ -24,7 +27,6 @@ session.In("Hey there")
 msg := session.Out()
 ```
 
-
 ## 2. High-Level Architecture
 
 The system consists of three primary layers that represent both functional components and a hierarchical organization of entities:
@@ -44,3 +46,4 @@ The Skill and Tool Layer implements a hierarchical approach to functionality org
 > Why don't we use "send_message" or something similar to send the messages back to the user?
 
 As all the models becoming reasoning models, internal monologue is becoming a different thing at the model level. With that, all the non-thinking tokens the model generates must sent to the user 
+
