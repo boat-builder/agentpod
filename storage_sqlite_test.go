@@ -140,8 +140,8 @@ func TestSQLiteStorage(t *testing.T) {
 		if userInfo.Name != "" {
 			t.Fatalf("Expected empty user name, but got '%s'", userInfo.Name)
 		}
-		if len(userInfo.CustomMeta) != 0 {
-			t.Fatalf("Expected empty custom meta, but got %v", userInfo.CustomMeta)
+		if len(userInfo.Meta) != 0 {
+			t.Fatalf("Expected empty custom meta, but got %v", userInfo.Meta)
 		}
 	})
 }

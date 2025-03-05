@@ -35,3 +35,5 @@ Godeps/
 
 # Environment variables file
 .env
+
+sampleprompt.txt

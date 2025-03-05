@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/boat-builder/agentpod/prompts"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	"github.com/openai/openai-go"
 )
@@ -54,9 +55,9 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 // buildFirstDeveloperMessage takes the user given prompt and add the user information to it.
 func (a *Agent) buildFirstDeveloperMessage(prompt string, userInfo UserInfo) string {
 	prompt = prompt + fmt.Sprintf("\n\nYou are talking to %s.", userInfo.Name)
-	if len(userInfo.CustomMeta) > 0 {
+	if len(userInfo.Meta) > 0 {
 		prompt += "\nHere is some information about them:\n"
-		for key, value := range userInfo.CustomMeta {
+		for key, value := range userInfo.Meta {
 			prompt += fmt.Sprintf("%s: %s\n", key, value)
 		}
 	}
@@ -83,24 +84,18 @@ func (a *Agent) Run(
 	outAgentChannel := make(chan openai.ChatCompletionChunk)
 
 	// Prepare session message history and validate state
-	if err := a.compileContext(ctx, session, storage, llmClient, modelName); err != nil {
+	if err := a.compileConversationHistory(session, storage); err != nil {
 		return nil, err
 	}
 
 	// Process the request asynchronously
-	go a.processRequest(ctx, session, llmClient, modelName, outAgentChannel, send_status_func)
+	go a.processRequest(ctx, session, llmClient, modelName, storage, outAgentChannel, send_status_func)
 
 	return outAgentChannel, nil
 }
 
-// compileContext builds the message history for the LLM request
-func (a *Agent) compileContext(
-	ctx context.Context,
-	session *Session,
-	storage Storage,
-	llmClient *LLM,
-	modelName string,
-) error {
+// compileConversationHistory builds the message history for the LLM request
+func (a *Agent) compileConversationHistory(session *Session, storage Storage) error {
 	// Validate session state - ensure the session contains exactly one user message
 	if session.State.MessageHistory.Len() != 1 {
 		a.logger.Error("Conversation history can only contain one user message")
@@ -114,12 +109,6 @@ func (a *Agent) compileContext(
 		return fmt.Errorf("conversation history can only contain one user message")
 	}
 
-	userInfo, err := storage.GetUserInfo(session)
-	if err != nil {
-		a.logger.Error("Error getting user info", "error", err)
-		return err
-	}
-
 	// add the last 5 messages to the conversation history
 	conversationHistory, err := storage.GetConversations(session, 5, 1)
 	if err != nil {
@@ -129,7 +118,6 @@ func (a *Agent) compileContext(
 
 	// Clear the history and rebuild it
 	session.State.MessageHistory.Clear()
-	session.State.MessageHistory.AddFirst(a.buildFirstDeveloperMessage(a.prompt, userInfo))
 	session.State.MessageHistory.Add(conversationHistory.All()...)
 	session.State.MessageHistory.Add(userMessage)
 	return nil
@@ -141,6 +129,7 @@ func (a *Agent) processRequest(
 	session *Session,
 	llmClient *LLM,
 	modelName string,
+	storage Storage,
 	outAgentChannel chan openai.ChatCompletionChunk,
 	send_status_func func(msg string),
 ) {
@@ -150,7 +139,7 @@ func (a *Agent) processRequest(
 	clonedMessages := session.State.MessageHistory.Clone()
 
 	// Get initial response from LLM
-	completion, err := a.getInitialLLMResponse(ctx, session, llmClient, modelName, outAgentChannel)
+	completion, err := a.chooseSkills(ctx, session, llmClient, modelName, storage, outAgentChannel)
 	if err != nil {
 		a.handleLLMError(err, modelName, outAgentChannel)
 		return
@@ -162,20 +151,53 @@ func (a *Agent) processRequest(
 	}
 
 	// Process tool calls if requested
-	results := a.processToolCalls(ctx, completion, clonedMessages, llmClient, modelName, outAgentChannel, send_status_func)
+	results := a.processSkillCalls(ctx, completion, clonedMessages, llmClient, modelName, outAgentChannel, send_status_func)
 
 	// Handle results based on number of tool calls
-	a.handleToolCallResults(completion, results, session, llmClient, modelName, outAgentChannel)
+	a.collateSkillCallResults(completion, results, session, llmClient, modelName, outAgentChannel)
 }
 
-// getInitialLLMResponse gets the initial response from the LLM
-func (a *Agent) getInitialLLMResponse(
+// chooseSkills gets the initial response from the LLM that chooses the skills
+func (a *Agent) chooseSkills(
 	ctx context.Context,
 	session *Session,
 	llmClient *LLM,
 	modelName string,
+	storage Storage,
 	outAgentChannel chan openai.ChatCompletionChunk,
 ) (openai.ChatCompletionAccumulator, error) {
+
+	userInfo, err := storage.GetUserInfo(session)
+	if err != nil {
+		a.logger.Error("Error getting user info", "error", err)
+		return openai.ChatCompletionAccumulator{}, err
+	}
+	session.State.MessageHistory.AddFirst(a.buildFirstDeveloperMessage(a.prompt, userInfo))
+
+	memoryBlocks := make(map[string]string)
+	memoryBlocks["UserName"] = userInfo.Name
+	for key, value := range userInfo.Meta {
+		memoryBlocks[key] = value
+	}
+
+	skillFunctions := make([]string, len(a.skills))
+	for i, skill := range a.skills {
+		skillFunctions[i] = skill.Name
+	}
+
+	systemPromptData := prompts.SystemPromptData{
+		UserPrompt:     a.prompt,
+		MemoryBlocks:   memoryBlocks,
+		SkillFunctions: skillFunctions,
+	}
+	systemPrompt, err := prompts.SkillSelectionPrompt(systemPromptData)
+	if err != nil {
+		a.logger.Error("Error getting system prompt", "error", err)
+		return openai.ChatCompletionAccumulator{}, err
+	}
+
+	session.State.MessageHistory.Add(DeveloperMessage(systemPrompt))
+
 	params := openai.ChatCompletionNewParams{
 		Messages: openai.F(session.State.MessageHistory.All()),
 		Model:    openai.F(modelName),
@@ -250,8 +272,8 @@ func (a *Agent) handleLLMError(err error, modelName string, outAgentChannel chan
 	}
 }
 
-// processToolCalls processes any tool calls requested by the LLM
-func (a *Agent) processToolCalls(
+// processSkillCalls processes any tool calls requested by the LLM
+func (a *Agent) processSkillCalls(
 	ctx context.Context,
 	completion openai.ChatCompletionAccumulator,
 	clonedMessages *MessageList,
@@ -301,8 +323,8 @@ func (a *Agent) processToolCalls(
 	return results
 }
 
-// handleToolCallResults handles the results of tool calls
-func (a *Agent) handleToolCallResults(
+// collateSkillCallResults handles the results of tool calls
+func (a *Agent) collateSkillCallResults(
 	completion openai.ChatCompletionAccumulator,
 	results map[string]openai.ChatCompletionMessageParamUnion,
 	session *Session,

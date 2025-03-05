@@ -16,8 +16,8 @@ type Pod struct {
 }
 
 type UserInfo struct {
-	Name       string
-	CustomMeta map[string]string
+	Name string
+	Meta map[string]string
 }
 
 // NewPod constructs a new Pod with the given resources.

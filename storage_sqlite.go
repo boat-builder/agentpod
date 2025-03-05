@@ -156,7 +156,7 @@ func (s *SQLiteStorage) FinishConversation(session *Session, assistantMessage st
 // As per requirements, we don't need actual user info in the SQLite table.
 func (s *SQLiteStorage) GetUserInfo(session *Session) (UserInfo, error) {
 	return UserInfo{
-		Name:       "",
-		CustomMeta: make(map[string]string),
+		Name: "",
+		Meta: make(map[string]string),
 	}, nil
 }
