@@ -40,9 +40,9 @@ func (ml *MessageList) Len() int {
 	return len(ml.Messages)
 }
 
-// Add appends a new message to the MessageList in a FIFO order.
-func (ml *MessageList) Add(msg openai.ChatCompletionMessageParamUnion) {
-	ml.Messages = append(ml.Messages, msg)
+// Add appends one or more new messages to the MessageList in a FIFO order.
+func (ml *MessageList) Add(msgs ...openai.ChatCompletionMessageParamUnion) {
+	ml.Messages = append(ml.Messages, msgs...)
 }
 
 func (ml *MessageList) AddFirst(prompt string) {

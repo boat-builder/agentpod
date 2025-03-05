@@ -39,3 +39,8 @@ The Agent Layer provides the structural framework for organizing capabilities wi
 The Skill and Tool Layer implements a hierarchical approach to functionality organization. Skills are defined as groups of related tools with associated system prompts that specify their domain or functionality. When an agent operates within a specific skill context (wearing a particular "hat"), it only has access to the tools that belong to that skill. This design allows developers to expose only relevant tools when needed, rather than overwhelming the LLM with all available options. Instead of implementing multiple isolated agents each with a single task, the framework enables a hierarchical organization of capabilities through skills. Each skill encapsulates a specific system prompt and a collection of tools that can be grouped logically, making the system more modular and easier to extend. An agent cannot wear different skill hats simultaneously but can switch between them as orchestrated by its high-level run method.
 
 
+## FAQ
+
+> Why don't we use "send_message" or something similar to send the messages back to the user?
+
+As all the models becoming reasoning models, internal monologue is becoming a different thing at the model level. With that, all the non-thinking tokens the model generates must sent to the user 

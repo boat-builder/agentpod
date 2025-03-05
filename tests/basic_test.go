@@ -58,8 +58,8 @@ type MockStorage struct {
 	UserInfoFn     func(*agentpod.Session) (agentpod.UserInfo, error)
 }
 
-// GetConversation returns the conversation history
-func (m *MockStorage) GetConversation(session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
+// GetConversations returns the conversation history
+func (m *MockStorage) GetConversations(session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
 	return m.ConversationFn(session, limit, offset)
 }
 
@@ -186,8 +186,10 @@ func TestConversationWithSkills(t *testing.T) {
 // Function for non-empty conversation history
 func getNonEmptyConversationHistory(session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
 	messages := agentpod.MessageList{}
-	messages.Add(agentpod.UserMessage("Can you tell me which color is apple?"))
-	messages.Add(agentpod.AssistantMessage("The apple is generally red"))
+	messages.Add(
+		agentpod.UserMessage("Can you tell me which color is apple?"),
+		agentpod.AssistantMessage("The apple is generally red"),
+	)
 	return messages, nil
 }
 

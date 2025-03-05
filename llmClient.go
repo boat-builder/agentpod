@@ -3,6 +3,7 @@ package agentpod
 import (
 	"context"
 
+	"github.com/invopop/jsonschema"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/ssestream"
@@ -63,4 +64,14 @@ func (c *LLM) NewStreaming(ctx context.Context, params openai.ChatCompletionNewP
 	opts := []option.RequestOption{}
 	opts = optsWithIds(ctx, opts)
 	return c.client.Chat.Completions.NewStreaming(ctx, params, opts...)
+}
+
+func GenerateSchema[T any]() interface{} {
+	reflector := jsonschema.Reflector{
+		AllowAdditionalProperties: false,
+		DoNotReference:            true,
+	}
+	var v T
+	schema := reflector.Reflect(v)
+	return schema
 }

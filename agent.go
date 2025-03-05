@@ -63,6 +63,10 @@ func (a *Agent) buildDeveloperMessage(prompt string, userInfo UserInfo) string {
 	return prompt
 }
 
+type RelevantMessageIDs struct {
+	MessageIDs []string `json:"messageIDs"`
+}
+
 // Run processes a user message through the LLM, executes any requested skills,
 // and returns a channel of completion chunks.
 func (a *Agent) Run(
@@ -78,13 +82,8 @@ func (a *Agent) Run(
 	}
 	outAgentChannel := make(chan openai.ChatCompletionChunk)
 
-	// Validate session state
-	if err := a.validateSessionState(session); err != nil {
-		return nil, err
-	}
-
-	// Prepare session message history
-	if err := a.prepareMessageHistory(ctx, session, storage); err != nil {
+	// Prepare session message history and validate state
+	if err := a.compileContext(ctx, session, storage, llmClient, modelName); err != nil {
 		return nil, err
 	}
 
@@ -94,52 +93,44 @@ func (a *Agent) Run(
 	return outAgentChannel, nil
 }
 
-// validateSessionState ensures the session contains exactly one user message
-func (a *Agent) validateSessionState(session *Session) error {
-	// at this point, the conversation history can only contain one user message
+// compileContext builds the message history for the LLM request
+func (a *Agent) compileContext(
+	ctx context.Context,
+	session *Session,
+	storage Storage,
+	llmClient *LLM,
+	modelName string,
+) error {
+	// Validate session state - ensure the session contains exactly one user message
 	if session.State.MessageHistory.Len() != 1 {
 		a.logger.Error("Conversation history can only contain one user message")
 		return fmt.Errorf("conversation history can only contain one user message")
 	}
+
+	// We need the user message to fetch relevant conversations from the history
 	userMessage := session.State.MessageHistory.All()[0]
 	if _, ok := userMessage.(openai.ChatCompletionUserMessageParam); !ok {
 		a.logger.Error("Conversation history can only contain one user message")
 		return fmt.Errorf("conversation history can only contain one user message")
 	}
-	return nil
-}
 
-// prepareMessageHistory builds the message history for the LLM request
-func (a *Agent) prepareMessageHistory(
-	ctx context.Context,
-	session *Session,
-	storage Storage,
-) error {
-	// Get the user message before clearing
-	userMessage := session.State.MessageHistory.All()[0]
-
-	// Clear the history and rebuild it
-	session.State.MessageHistory.Clear()
-
-	// Add the prompt to the message history
 	userInfo, err := storage.GetUserInfo(session)
 	if err != nil {
 		a.logger.Error("Error getting user info", "error", err)
 		return err
 	}
-	session.State.MessageHistory.AddFirst(a.buildDeveloperMessage(a.prompt, userInfo))
 
 	// add the last 5 messages to the conversation history
-	conversationHistory, err := storage.GetConversation(session, 5, 1)
+	conversationHistory, err := storage.GetConversations(session, 5, 1)
 	if err != nil {
 		a.logger.Error("Error getting conversation history", "error", err)
 		return err
 	}
-	for _, msg := range conversationHistory.All() {
-		session.State.MessageHistory.Add(msg)
-	}
 
-	// adding the user message as the last message
+	// Clear the history and rebuild it
+	session.State.MessageHistory.Clear()
+	session.State.MessageHistory.AddFirst(a.buildDeveloperMessage(a.prompt, userInfo))
+	session.State.MessageHistory.Add(conversationHistory.All()...)
 	session.State.MessageHistory.Add(userMessage)
 	return nil
 }
