@@ -78,6 +78,10 @@ const PromptFindRelevantMessages = `Identify the IDs of messages from the messag
 - Avoid assumptions based on conversational similarity without explicit links.
 `
 
+type RelevantMessageIDs struct {
+	MessageIDs []string `json:"messageIDs"`
+}
+
 // GetMessageText extracts the plain text content from an OpenAI chat message
 // of any type (user, assistant, or developer message)
 func GetMessageText(message openai.ChatCompletionMessageParamUnion) (string, error) {
@@ -303,4 +307,30 @@ func BuildRelevantMessageHistory(ctx context.Context, messages MessageList, curr
 	}
 
 	return result, nil
+}
+
+// CompileConversationHistory builds the message history for the LLM request
+func CompileConversationHistory(session *Session, storage Storage) error {
+	// Validate session state - ensure the session contains exactly one user message
+	if session.State.MessageHistory.Len() != 1 {
+		return fmt.Errorf("conversation history can only contain one user message")
+	}
+
+	// We need the user message to fetch relevant conversations from the history
+	userMessage := session.State.MessageHistory.All()[0]
+	if _, ok := userMessage.(openai.ChatCompletionUserMessageParam); !ok {
+		return fmt.Errorf("conversation history can only contain one user message")
+	}
+
+	// add the last 5 messages to the conversation history
+	conversationHistory, err := storage.GetConversations(session, 5, 1)
+	if err != nil {
+		return err
+	}
+
+	// Clear the history and rebuild it
+	session.State.MessageHistory.Clear()
+	session.State.MessageHistory.Add(conversationHistory.All()...)
+	session.State.MessageHistory.Add(userMessage)
+	return nil
 }

@@ -75,7 +75,7 @@ func (s *SQLiteStorage) GetConversations(session *Session, limit int, offset int
 	LIMIT ? OFFSET ?
 	`
 
-	rows, err := s.db.Query(query, session.SessionID, limit, offset)
+	rows, err := s.db.Query(query, limit, offset)
 	if err != nil {
 		return MessageList{}, fmt.Errorf("failed to query conversations: %w", err)
 	}

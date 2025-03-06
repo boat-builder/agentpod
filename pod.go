@@ -3,8 +3,6 @@ package agentpod
 import (
 	"context"
 	"log/slog"
-
-	"github.com/openai/openai-go"
 )
 
 type Pod struct {
@@ -63,8 +61,10 @@ func (p *Pod) run(sess *Session) {
 			sess.OutUserChannel <- Response{Type: ResponseTypeEnd}
 			return
 		}
-		p.storage.CreateConversation(sess, userMessage)
-		completion := openai.ChatCompletionAccumulator{}
+		err := p.storage.CreateConversation(sess, userMessage)
+		if err != nil {
+			p.logger.Error("Error creating conversation", "error", err)
+		}
 
 		outAgentChannel, err := p.Agent.Run(
 			sess.Ctx,
@@ -80,22 +80,22 @@ func (p *Pod) run(sess *Session) {
 				Type:    ResponseTypeError,
 			}
 		}
-		var openAIMessageID string
+		aggregated := ""
 		for chunk := range outAgentChannel {
-			// when chunk id is not same as the previous one, it's part of a new message. Reset everything.
-			if chunk.ID != openAIMessageID {
-				openAIMessageID = chunk.ID
-				completion = openai.ChatCompletionAccumulator{}
-			}
-			completion.AddChunk(chunk)
-			// We won't send the message as a "final message" because there can be other streams in progress.
 			// We'll wait for the channel to close
-			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			if len(chunk) > 0 {
+				aggregated += chunk
 				sess.OutUserChannel <- Response{
-					Content: chunk.Choices[0].Delta.Content,
+					Content: chunk,
 					Type:    ResponseTypePartialText,
 				}
 			}
+		}
+
+		// Finish the conversation in the store
+		err = p.storage.FinishConversation(sess, aggregated)
+		if err != nil {
+			p.logger.Error("Error finishing conversation", "error", err)
 		}
 
 		// channel is closed, send the final message

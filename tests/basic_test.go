@@ -145,8 +145,9 @@ func TestConversationWithSkills(t *testing.T) {
 	}
 	mem := &agentpod.Zep{}
 	skill := agentpod.Skill{
-		Name:        "AppleExpert",
-		Description: "You are an expert in apples",
+		Name:         "AppleExpert",
+		Description:  "You are an expert in apples",
+		SystemPrompt: "As an apple expert, you provide detailed information about different apple varieties and their characteristics.",
 		Tools: []agentpod.Tool{
 			&BestAppleFinder{
 				toolName:    "BestAppleFinder",
@@ -154,7 +155,7 @@ func TestConversationWithSkills(t *testing.T) {
 			},
 		},
 	}
-	agent := agentpod.NewAgent("You are a good farmer", []agentpod.Skill{skill})
+	agent := agentpod.NewAgent("You are a good farmer. You answer user questions briefly and concisely. You do not add any extra information but just answer user questions in fewer words possible.", []agentpod.Skill{skill})
 
 	// Create a mock storage with empty conversation history
 	storage := &MockStorage{
