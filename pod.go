@@ -2,8 +2,13 @@ package agentpod
 
 import (
 	"context"
+	"log"
 	"log/slog"
+
+	"github.com/boat-builder/agentpod/dashboard"
 )
+
+const DashboardRemoteURL = "https://dash-assets.agentpod.ai"
 
 type Pod struct {
 	llmConfig *LLMConfig
@@ -103,4 +108,12 @@ func (p *Pod) run(sess *Session) {
 			Type: ResponseTypeEnd,
 		}
 	}
+}
+
+func (p *Pod) StartDashboard(port int) {
+	if dashboardStorage, ok := p.storage.(dashboard.Storage); ok {
+		dashboard := dashboard.NewDashboard(DashboardRemoteURL, dashboardStorage)
+		dashboard.Serve(port)
+	}
+	log.Fatalln("Dashboard storage not implemented")
 }
