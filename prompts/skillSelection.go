@@ -15,7 +15,7 @@ type SkillSelectionPromptData struct {
 const SkillSelectionPromptTemplate = `
 {{ .UserSystemPrompt }}
 
-You can use skill functions {{ formatSkillFunctions .SkillFunctions }} to help you answer user's question. Do not call same skill more than once. Skill functions can internally handle the need for multiple instances of the same skill.
+You can use skill functions {{ formatSkillFunctions .SkillFunctions }} to help you answer user's question. Skill functions are capable of handling multiple queries. Do not call the same skill more than once. When calling skill function, pass the clear instructions for the skill function to follow to get the goal. Skill functions is capable of understanding human language and take complicated actions based on the instructions.
 
 
 {{ formatMemoryBlocks .MemoryBlocks }}`

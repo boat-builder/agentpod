@@ -61,18 +61,18 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 // summarizeMultipleToolResults summarizes results when multiple tools were called
 func (a *Agent) summarizeMultipleToolResults(
 	results map[string]openai.ChatCompletionMessageParamUnion,
-	session *Session,
+	clonedMessages *MessageList,
 	llmClient *LLM,
 	modelName string,
 	outAgentChannel chan string,
 ) {
 	// Prepare the results for the OpenAI API call
 	for _, result := range results {
-		session.State.MessageHistory.Add(result)
+		clonedMessages.Add(result)
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Messages: openai.F(session.State.MessageHistory.All()),
+		Messages: openai.F(clonedMessages.All()),
 		Model:    openai.F(modelName),
 		StreamOptions: openai.F(openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: openai.F(true),
@@ -99,12 +99,10 @@ func (a *Agent) summarizeMultipleToolResults(
 func (a *Agent) returnSingleToolResult(
 	completion *openai.ChatCompletion,
 	results map[string]openai.ChatCompletionMessageParamUnion,
-	session *Session,
 	outAgentChannel chan string,
 ) {
 	// If only one skill is called, return the result directly
 	toolCallID := completion.Choices[0].Message.ToolCalls[0].ID
-	session.State.MessageHistory.Add(results[toolCallID])
 	resp := results[toolCallID]
 
 	if message, ok := resp.(openai.ChatCompletionToolMessageParam); ok {
@@ -188,6 +186,29 @@ func (a *Agent) chooseSkills(
 		a.logger.Error("Expectation is that tool call and content shouldn't both be non-empty", "message", completion.Choices[0].Message)
 	}
 
+	// Check for duplicate skills in tool calls
+	if len(completion.Choices[0].Message.ToolCalls) > 1 {
+		// Create a map to track seen skill names
+		seenSkills := make(map[string]bool)
+		var uniqueToolCalls []openai.ChatCompletionMessageToolCall
+
+		// Keep only the first occurrence of each skill
+		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
+			skillName := toolCall.Function.Name
+			if !seenSkills[skillName] {
+				seenSkills[skillName] = true
+				uniqueToolCalls = append(uniqueToolCalls, toolCall)
+			} else {
+				a.logger.Warn("Removing duplicate skill from completion", "skill", skillName)
+			}
+		}
+
+		// If duplicates were found, update the tool calls in the completion object
+		if len(uniqueToolCalls) < len(completion.Choices[0].Message.ToolCalls) {
+			completion.Choices[0].Message.ToolCalls = uniqueToolCalls
+		}
+	}
+
 	return completion, nil
 }
 
@@ -195,17 +216,17 @@ func (a *Agent) chooseSkills(
 func (a *Agent) collateSkillCallResults(
 	completion *openai.ChatCompletion,
 	results map[string]openai.ChatCompletionMessageParamUnion,
-	session *Session,
+	clonedMessages *MessageList,
 	llmClient *LLM,
 	modelName string,
 	outAgentChannel chan string,
 ) {
 	// If multiple skills were called, summarize the results
 	if len(completion.Choices[0].Message.ToolCalls) > 1 {
-		a.summarizeMultipleToolResults(results, session, llmClient, modelName, outAgentChannel)
+		a.summarizeMultipleToolResults(results, clonedMessages, llmClient, modelName, outAgentChannel)
 	} else if len(completion.Choices[0].Message.ToolCalls) == 1 {
 		// If only one skill was called, return the result directly
-		a.returnSingleToolResult(completion, results, session, outAgentChannel)
+		a.returnSingleToolResult(completion, results, outAgentChannel)
 	}
 }
 
@@ -289,8 +310,11 @@ func (a *Agent) processRequest(
 
 	wg.Wait()
 
+	// creating a new cloned message that doesn't have anything from skill context runner but has the tool calls
+	clonedMessages := session.State.MessageHistory.Clone()
+	clonedMessages.Add(completion.Choices[0].Message)
 	// Handle results based on number of tool calls
-	a.collateSkillCallResults(completion, results, session, llmClient, modelName, outChan)
+	a.collateSkillCallResults(completion, results, clonedMessages, llmClient, modelName, outChan)
 }
 
 // Run processes a user message through the LLM, executes any requested skills,
