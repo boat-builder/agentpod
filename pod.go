@@ -11,11 +11,12 @@ import (
 const DashboardRemoteURL = "https://dash-assets.agentpod.ai"
 
 type Pod struct {
-	llmConfig *LLMConfig
-	Mem       Memory
-	Agent     Agent
-	logger    *slog.Logger
-	storage   Storage
+	llmConfig         *LLMConfig
+	Mem               Memory
+	Agent             Agent
+	logger            *slog.Logger
+	storage           Storage
+	dashboardProxyURL string
 }
 
 type UserInfo struct {
@@ -26,11 +27,12 @@ type UserInfo struct {
 // NewPod constructs a new Pod with the given resources.
 func NewPod(llmConfig *LLMConfig, mem Memory, ag *Agent, storage Storage) *Pod {
 	return &Pod{
-		llmConfig: llmConfig,
-		Mem:       mem,
-		Agent:     *ag,
-		logger:    slog.Default(),
-		storage:   storage,
+		llmConfig:         llmConfig,
+		Mem:               mem,
+		Agent:             *ag,
+		logger:            slog.Default(),
+		storage:           storage,
+		dashboardProxyURL: DashboardRemoteURL,
 	}
 }
 
@@ -108,6 +110,11 @@ func (p *Pod) run(sess *Session) {
 			Type: ResponseTypeEnd,
 		}
 	}
+}
+
+func (p *Pod) WithDashboardProxy(url string) *Pod {
+	p.dashboardProxyURL = url
+	return p
 }
 
 func (p *Pod) StartDashboard(port int) {
