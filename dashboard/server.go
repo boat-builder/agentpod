@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const DashboardAssetRemoteURL = "https://dash-assets.agentpod.ai"
+
 type DashboardUser struct {
 	ID               string
 	Name             string
