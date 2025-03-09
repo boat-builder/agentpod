@@ -82,12 +82,14 @@ type TokenRates struct {
 	Output float64
 }
 
-// Pricing constants for GPT-4o and GPT-4o-mini (in dollars per million tokens)
+// Pricing constants for GPT-4o and GPT-4o-mini and O3-mini(in dollars per million tokens)
 const (
 	GPT4oInputRate      = 2.5
 	GPT4oOutputRate     = 10.0
 	GPT4oMiniInputRate  = 0.15
 	GPT4oMiniOutputRate = 0.60
+	O3MiniInputRate     = 1.10
+	O3MiniOutputRate    = 4.40
 )
 
 // ModelPricings is a map of model names to their pricing information
@@ -107,6 +109,10 @@ var ModelPricings = map[string]TokenRates{
 	"azure/gpt-4o-mini": {
 		Input:  GPT4oMiniInputRate,
 		Output: GPT4oMiniOutputRate,
+	},
+	"azure/o3-mini": {
+		Input:  O3MiniInputRate,
+		Output: O3MiniOutputRate,
 	},
 }
 

@@ -72,33 +72,33 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 	// TODO - we need to have some sort of hard limit for the number iterations possible
 
 	// Initial call to have LLM think step by step before executing tools
-	var toolNames []string
-	for _, tool := range skill.Tools {
-		toolNames = append(toolNames, tool.Name())
-	}
+	// var toolNames []string
+	// for _, tool := range skill.Tools {
+	// 	toolNames = append(toolNames, tool.Name())
+	// }
 
-	toolsInfo := "Available tools:\n"
-	for _, name := range toolNames {
-		toolsInfo += fmt.Sprintf("- %s\n", name)
-	}
+	// toolsInfo := "Available tools:\n"
+	// for _, name := range toolNames {
+	// 	toolsInfo += fmt.Sprintf("- %s\n", name)
+	// }
 
-	thinkingPromptText := fmt.Sprintf("Think step by step about how to answer the user's question. What information do you need? What steps will you take? Please plan your approach carefully. You have below tools available to you:\n\n%s", toolsInfo)
-	thinkingPrompt := DeveloperMessage(thinkingPromptText)
-	clonedMessages.Add(thinkingPrompt)
+	// thinkingPromptText := fmt.Sprintf("You will have these tools available to you. Strategize how can you give the best possible answer using these tools:\n\n%s", toolsInfo)
+	// thinkingPrompt := DeveloperMessage(thinkingPromptText)
+	// clonedMessages.Add(thinkingPrompt)
 
-	thinkingParams := openai.ChatCompletionNewParams{
-		Messages: openai.F(clonedMessages.All()),
-		Model:    openai.F(modelName),
-	}
+	// thinkingParams := openai.ChatCompletionNewParams{
+	// 	Messages: openai.F(clonedMessages.All()),
+	// 	Model:    openai.F(modelName),
+	// }
 
-	thinkingCompletion, err := llmClient.New(ctx, thinkingParams)
-	if err != nil {
-		a.logger.Error("Error calling LLM for step-by-step thinking", "error", err)
-		return MessageWhenToolErrorWithRetry("Network error", skillToolCallID), err
-	}
+	// thinkingCompletion, err := llmClient.New(ctx, thinkingParams)
+	// if err != nil {
+	// 	a.logger.Error("Error calling LLM for step-by-step thinking", "error", err)
+	// 	return MessageWhenToolErrorWithRetry("Network error", skillToolCallID), err
+	// }
 
-	// Add the LLM's thinking to the message history
-	clonedMessages.Add(thinkingCompletion.Choices[0].Message)
+	// // Add the LLM's thinking to the message history
+	// clonedMessages.Add(thinkingCompletion.Choices[0].Message)
 
 	for {
 		// We add a developer message just for this loop (not to the history) to ensure the LLM doesn't output anything except the necessary tool to be called.

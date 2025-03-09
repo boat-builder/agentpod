@@ -2,7 +2,7 @@ module github.com/boat-builder/agentpod
 
 go 1.23.2
 
-require github.com/openai/openai-go v0.1.0-alpha.59
+require github.com/openai/openai-go v0.1.0-alpha.62
 
 require (
 	github.com/matoous/go-nanoid/v2 v2.1.0

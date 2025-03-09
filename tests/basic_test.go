@@ -98,7 +98,7 @@ func TestSimpleConversation(t *testing.T) {
 	llmConfig := agentpod.LLMConfig{
 		BaseURL: config.KeywordsAIEndpoint,
 		APIKey:  config.KeywordsAIAPIKey,
-		Model:   "azure/gpt-4o-mini",
+		Model:   "azure/o3-mini",
 	}
 	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says.", []agentpod.Skill{})
@@ -141,7 +141,7 @@ func TestConversationWithSkills(t *testing.T) {
 	llmConfig := agentpod.LLMConfig{
 		BaseURL: config.KeywordsAIEndpoint,
 		APIKey:  config.KeywordsAIAPIKey,
-		Model:   "gpt-4o-mini",
+		Model:   "azure/o3-mini",
 	}
 	mem := &agentpod.Zep{}
 	skill := agentpod.Skill{
@@ -203,7 +203,7 @@ func TestConversationWithHistory(t *testing.T) {
 	llmConfig := agentpod.LLMConfig{
 		BaseURL: config.KeywordsAIEndpoint,
 		APIKey:  config.KeywordsAIAPIKey,
-		Model:   "azure/gpt-4o-mini",
+		Model:   "azure/o3-mini",
 	}
 	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("You are an assistant!", []agentpod.Skill{})
