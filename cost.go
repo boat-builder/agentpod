@@ -53,7 +53,7 @@ type CostDetails struct {
 // Cost returns the accumulated cost of the session.
 // It calculates the cost based on the total input and output tokens and the pricing for the session's model.
 func (s *Session) Cost() (*CostDetails, bool) {
-	pricing, exists := ModelPricings[s.LLMConfig.ReasoningModel]
+	pricing, exists := ModelPricings[s.llm.ReasoningModel]
 	if !exists {
 		return nil, false
 	}
