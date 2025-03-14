@@ -12,26 +12,27 @@ import (
 // Define a custom type for context keys
 type ContextKey string
 
-type LLMConfig struct {
-	APIKey  string
-	BaseURL string
-	Model   string
-}
-
-// LLM is a wrapper around the openai client, just to inject the extra metadata for now
 type LLM struct {
-	client *openai.Client
+	APIKey          string
+	BaseURL         string
+	ReasoningModel  string
+	GenerationModel string
+	client          *openai.Client
 }
 
-func (config *LLMConfig) NewLLMClient() *LLM {
+func NewLLM(apiKey string, baseURL string, reasoningModel string, generationModel string) *LLM {
 	var client *openai.Client
-	if config.BaseURL != "" {
-		client = openai.NewClient(option.WithBaseURL(config.BaseURL), option.WithAPIKey(config.APIKey))
+	if baseURL != "" {
+		client = openai.NewClient(option.WithBaseURL(baseURL), option.WithAPIKey(apiKey))
 	} else {
-		client = openai.NewClient(option.WithAPIKey(config.APIKey))
+		client = openai.NewClient(option.WithAPIKey(apiKey))
 	}
 	return &LLM{
-		client: client,
+		APIKey:          apiKey,
+		BaseURL:         baseURL,
+		ReasoningModel:  reasoningModel,
+		GenerationModel: generationModel,
+		client:          client,
 	}
 }
 
@@ -44,8 +45,8 @@ func optsWithIds(ctx context.Context, opts []option.RequestOption) []option.Requ
 		opts = append(opts, option.WithJSONSet("customer_identifier", customerID))
 	}
 
-	if customMeta, ok := ctx.Value(ContextKey("customMeta")).(map[string]string); ok {
-		for key, value := range customMeta {
+	if extraMeta, ok := ctx.Value(ContextKey("extra")).(map[string]string); ok {
+		for key, value := range extraMeta {
 			opts = append(opts, option.WithJSONSet(key, value))
 		}
 	}
