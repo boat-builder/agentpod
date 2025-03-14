@@ -10,10 +10,10 @@ type Storage interface {
 	// we'll do the offset from the end of the conversation (i.e., skip the last 5 conversations
 	// in the whole chat history) and then take the 10 messages from that point backwards and
 	// return a list of those 10 messages arranged in the described order.
-	GetConversations(session *Session, limit int, offset int) (MessageList, error)
-	CreateConversation(session *Session, userMessage string) error
-	FinishConversation(session *Session, assistantMessage string) error
+	GetConversations(meta Meta, limit int, offset int) (MessageList, error)
+	CreateConversation(meta Meta, userMessage string) error
+	FinishConversation(meta Meta, assistantMessage string) error
 
 	// TODO - probably should be removed user related
-	GetUserInfo(session *Session) (UserInfo, error)
+	GetUserInfo(meta Meta) (UserInfo, error)
 }
