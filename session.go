@@ -8,136 +8,138 @@ import (
 	"sync"
 )
 
-// Session holds ephemeral conversation data & references to global resources.
-type Session struct {
-	Ctx       context.Context
-	Cancel    context.CancelFunc
-	CloseOnce sync.Once
-	// Fields for conversation history, ephemeral context, partial results, etc.
-	InUserChannel  chan string
-	OutUserChannel chan Response
-	State          *SessionState
-
+type Meta struct {
 	CustomerID string
 	SessionID  string
-	CustomMeta map[string]string
+	Extra      map[string]string
+}
 
-	logger    *slog.Logger
-	modelName string
+type UserInfo struct {
+	Name string
+	Meta map[string]string
+}
+
+// Session holds ephemeral conversation data & references to global resources.
+type Session struct {
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+
+	inUserChannel  chan string
+	outUserChannel chan Response
+
+	llm     *LLM
+	memory  Memory
+	agent   *Agent
+	storage Storage
+
+	meta Meta
+
+	logger *slog.Logger
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
-// TODO - make sure the context is properly managed, propagated
-func newSession(ctx context.Context, customerID, sessionID string, customMeta map[string]string, modelName string) *Session {
-	state := NewSessionState()
+func NewSession(ctx context.Context, llm *LLM, mem Memory, ag *Agent, storage Storage, meta Meta) *Session {
 	ctx, cancel := context.WithCancel(ctx)
-	ctx = context.WithValue(ctx, ContextKey("customerID"), customerID)
-	ctx = context.WithValue(ctx, ContextKey("sessionID"), sessionID)
-	ctx = context.WithValue(ctx, ContextKey("customMeta"), customMeta)
+	ctx = context.WithValue(ctx, ContextKey("customerID"), meta.CustomerID)
+	ctx = context.WithValue(ctx, ContextKey("sessionID"), meta.SessionID)
+	ctx = context.WithValue(ctx, ContextKey("extra"), meta.Extra)
 	s := &Session{
-		InUserChannel:  make(chan string),
-		OutUserChannel: make(chan Response),
-		Ctx:            ctx,
-		Cancel:         cancel,
-		logger:         slog.Default(),
-		State:          state,
-		modelName:      modelName,
-		CustomerID:     customerID,
-		SessionID:      sessionID,
-		CustomMeta:     customMeta,
+		ctx:       ctx,
+		cancel:    cancel,
+		closeOnce: sync.Once{},
+
+		inUserChannel:  make(chan string),
+		outUserChannel: make(chan Response),
+
+		llm:     llm,
+		memory:  mem,
+		agent:   ag,
+		storage: storage,
+
+		meta: meta,
+
+		logger: slog.Default(),
 	}
+	go s.run()
 	return s
 }
 
 // In processes incoming user messages. Could queue or immediately handle them.
 func (s *Session) In(userMessage string) {
-	s.InUserChannel <- userMessage
+	s.inUserChannel <- userMessage
 }
 
 // Out retrieves the next message from the output channel, blocking until a message is available.
 func (s *Session) Out() Response {
-	return <-s.OutUserChannel
+	return <-s.outUserChannel
 }
 
 // Close ends the session lifecycle and releases any resources if needed.
 func (s *Session) Close() {
-	s.CloseOnce.Do(func() {
-		s.Cancel()
-		close(s.InUserChannel)
+	s.closeOnce.Do(func() {
+		s.cancel()
+		close(s.inUserChannel)
 	})
 }
 
-func (s *Session) WithUserMessage(userMessage string) *Session {
-	// if message history has atleast one message, this should panic
-	if s.State.MessageHistory.Len() > 0 {
-		panic("message history has atleast one message")
+func (s *Session) sendStatus(msg string) {
+	s.outUserChannel <- Response{
+		Content: msg,
+		Type:    ResponseTypeStatus,
 	}
-	s.State.MessageHistory.Add(UserMessage(userMessage))
-	return s
 }
 
-// TokenRates defines cost per million tokens for input and output
-type TokenRates struct {
-	Input  float64
-	Output float64
-}
+// run is the main loop for the session. It listens for user messages and process here. Although
+// we don't support now, the idea is that session should support interactive mode which is why
+// the input channel exists. Session should hold the control of how to route the messages to whichever agents
+// when we support multiple agents.
+// TODO - handle refusal everywhere
+// TODO - handle other errors like network errors everywhere
+func (s *Session) run() {
+	defer s.Close()
+	select {
+	case <-s.ctx.Done():
+		s.outUserChannel <- Response{Type: ResponseTypeEnd}
+	case userMessage, ok := <-s.inUserChannel:
+		if !ok {
+			s.logger.Error("Session input channel closed")
+			s.outUserChannel <- Response{Type: ResponseTypeEnd}
+			return
+		}
+		err := s.storage.CreateConversation(s.meta, userMessage)
+		if err != nil {
+			s.logger.Error("Error creating conversation", "error", err)
+		}
 
-// Pricing constants for GPT-4o and GPT-4o-mini and O3-mini(in dollars per million tokens)
-const (
-	GPT4oInputRate      = 2.5
-	GPT4oOutputRate     = 10.0
-	GPT4oMiniInputRate  = 0.15
-	GPT4oMiniOutputRate = 0.60
-	O3MiniInputRate     = 1.10
-	O3MiniOutputRate    = 4.40
-)
+		outAgentChannel, err := s.agent.Run(s.ctx, s.llm, s.sendStatus, s.storage)
+		if err != nil {
+			s.outUserChannel <- Response{
+				Content: err.Error(),
+				Type:    ResponseTypeError,
+			}
+		}
+		aggregated := ""
+		for chunk := range outAgentChannel {
+			// We'll wait for the channel to close
+			if len(chunk) > 0 {
+				aggregated += chunk
+				s.outUserChannel <- Response{
+					Content: chunk,
+					Type:    ResponseTypePartialText,
+				}
+			}
+		}
 
-// ModelPricings is a map of model names to their pricing information
-var ModelPricings = map[string]TokenRates{
-	"gpt-4o": {
-		Input:  GPT4oInputRate,
-		Output: GPT4oOutputRate,
-	},
-	"azure/gpt-4o": {
-		Input:  GPT4oInputRate,
-		Output: GPT4oOutputRate,
-	},
-	"gpt-4o-mini": {
-		Input:  GPT4oMiniInputRate,
-		Output: GPT4oMiniOutputRate,
-	},
-	"azure/gpt-4o-mini": {
-		Input:  GPT4oMiniInputRate,
-		Output: GPT4oMiniOutputRate,
-	},
-	"azure/o3-mini": {
-		Input:  O3MiniInputRate,
-		Output: O3MiniOutputRate,
-	},
-}
+		// Finish the conversation in the store
+		err = s.storage.FinishConversation(s.meta, aggregated)
+		if err != nil {
+			s.logger.Error("Error finishing conversation", "error", err)
+		}
 
-// CostDetails represents detailed cost information for a session
-type CostDetails struct {
-	InputTokens  int64
-	OutputTokens int64
-	TotalCost    float64
-}
-
-// Cost returns the accumulated cost of the session.
-// It calculates the cost based on the total input and output tokens and the pricing for the session's model.
-func (s *Session) Cost() (*CostDetails, bool) {
-	pricing, exists := ModelPricings[s.modelName]
-	if !exists {
-		return nil, false
+		// channel is closed, send the final message
+		s.outUserChannel <- Response{
+			Type: ResponseTypeEnd,
+		}
 	}
-
-	inputCost := float64(0) * pricing.Input / 1000000
-	outputCost := float64(0) * pricing.Output / 1000000
-	totalCost := inputCost + outputCost
-
-	return &CostDetails{
-		InputTokens:  0,
-		OutputTokens: 0,
-		TotalCost:    totalCost,
-	}, true
 }
