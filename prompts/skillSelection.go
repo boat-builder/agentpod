@@ -12,11 +12,15 @@ type SkillSelectionPromptData struct {
 }
 
 // SkillSelectionPromptTemplate is the template for skill selection prompts.
+// TODO - get user preference from the memory (zep/mem0)
 const SkillSelectionPromptTemplate = `
 {{ .UserSystemPrompt }}
 
 You can use skill functions {{ formatSkillFunctions .SkillFunctions }} to help you answer user's question. Skill functions are capable of handling multiple queries. Do not call the same skill more than once. When calling skill function, pass the clear instructions for the skill function to follow to get the goal. Skill functions is capable of understanding human language and take complicated actions based on the instructions.
 
+<UserPreferences>
+- Don't be too chatty
+</UserPreferences>
 
 {{ formatMemoryBlocks .MemoryBlocks }}`
 

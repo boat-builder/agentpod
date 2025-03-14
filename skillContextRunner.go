@@ -49,7 +49,7 @@ func (a *Agent) GenerateSummary(ctx context.Context, messages *MessageList, llmC
 	return completion.Choices[0].Message.Content, nil
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolCallID string, clonedMessages *MessageList, llmClient *LLM, modelName string, outAgentChannel chan string, send_status_func func(msg string), userInfo UserInfo) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outAgentChannel chan Response, userInfo UserInfo, skill *Skill, skillToolCallID string) (openai.ChatCompletionMessageParamUnion, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 	memoryBlocks := make(map[string]string)
 	memoryBlocks["UserName"] = userInfo.Name
@@ -67,55 +67,24 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 		a.logger.Error("Error getting system prompt", "error", err)
 		return nil, err
 	}
-	clonedMessages.AddFirst(systemPrompt)
-
-	// TODO - we need to have some sort of hard limit for the number iterations possible
-
-	// Initial call to have LLM think step by step before executing tools
-	// var toolNames []string
-	// for _, tool := range skill.Tools {
-	// 	toolNames = append(toolNames, tool.Name())
-	// }
-
-	// toolsInfo := "Available tools:\n"
-	// for _, name := range toolNames {
-	// 	toolsInfo += fmt.Sprintf("- %s\n", name)
-	// }
-
-	// thinkingPromptText := fmt.Sprintf("You will have these tools available to you. Strategize how can you give the best possible answer using these tools:\n\n%s", toolsInfo)
-	// thinkingPrompt := DeveloperMessage(thinkingPromptText)
-	// clonedMessages.Add(thinkingPrompt)
-
-	// thinkingParams := openai.ChatCompletionNewParams{
-	// 	Messages: openai.F(clonedMessages.All()),
-	// 	Model:    openai.F(modelName),
-	// }
-
-	// thinkingCompletion, err := llmClient.New(ctx, thinkingParams)
-	// if err != nil {
-	// 	a.logger.Error("Error calling LLM for step-by-step thinking", "error", err)
-	// 	return MessageWhenToolErrorWithRetry("Network error", skillToolCallID), err
-	// }
-
-	// // Add the LLM's thinking to the message history
-	// clonedMessages.Add(thinkingCompletion.Choices[0].Message)
+	messageHistory.AddFirst(systemPrompt)
 
 	for {
 		// We add a developer message just for this loop (not to the history) to ensure the LLM doesn't output anything except the necessary tool to be called.
 		params := openai.ChatCompletionNewParams{
-			Messages: openai.F(clonedMessages.All()),
-			Model:    openai.F(modelName),
+			Messages: openai.F(messageHistory.All()),
+			Model:    openai.F(llm.ReasoningModel),
 		}
 		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
 		if len(skill.GetTools()) > 0 {
 			params.Tools = openai.F(skill.GetTools())
 		}
-		completion, err := llmClient.New(ctx, params)
+		completion, err := llm.New(ctx, params)
 		if err != nil {
 			a.logger.Error("Error calling LLM while running skill", "error", err)
 			return MessageWhenToolErrorWithRetry("Network error", skillToolCallID), err
 		}
-		clonedMessages.Add(completion.Choices[0].Message)
+		messageHistory.Add(completion.Choices[0].Message)
 
 		// Check if both tool call and content are non-empty
 		bothToolCallAndContent := completion.Choices[0].Message.ToolCalls != nil && completion.Choices[0].Message.Content != ""
@@ -132,18 +101,21 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 			tool, err := skill.GetTool(toolCall.Function.Name)
 			if err != nil {
 				a.logger.Error("Error getting tool", "error", err)
-				clonedMessages.Add(MessageWhenToolError(toolCall.ID))
+				messageHistory.Add(MessageWhenToolError(toolCall.ID))
 				continue
 			}
 			if tool.StatusMessage() != "" {
-				send_status_func(tool.StatusMessage())
+				outAgentChannel <- Response{
+					Content: tool.StatusMessage(),
+					Type:    ResponseTypeStatus,
+				}
 			}
 			a.logger.Info("Tool", "tool", tool.Name(), "arguments", toolCall.Function.Arguments)
 			arguments := map[string]interface{}{}
 			err = json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments)
 			if err != nil {
 				a.logger.Error("Error unmarshalling tool arguments", "error", err)
-				clonedMessages.Add(MessageWhenToolErrorWithRetry(err.Error(), skillToolCallID))
+				messageHistory.Add(MessageWhenToolErrorWithRetry(err.Error(), skillToolCallID))
 				continue
 			}
 			// TODO - model doesn't always generate valid JSON, so we need to validate the arguments and ask LLM to fix if there are errors
@@ -154,19 +126,19 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 				switch {
 				case errors.As(err, &ignErr):
 					// It's an IgnorableError
-					clonedMessages.Add(MessageWhenToolError(toolCall.ID))
+					messageHistory.Add(MessageWhenToolError(toolCall.ID))
 					continue
 				case errors.As(err, &retErr):
 					// It's a RetryableError
-					clonedMessages.Add(MessageWhenToolErrorWithRetry(err.Error(), toolCall.ID))
+					messageHistory.Add(MessageWhenToolErrorWithRetry(err.Error(), toolCall.ID))
 
 				default:
 					// Some other error
-					clonedMessages.Add(MessageWhenToolError(toolCall.ID))
+					messageHistory.Add(MessageWhenToolError(toolCall.ID))
 					continue
 				}
 			} else {
-				clonedMessages.Add(openai.ChatCompletionToolMessageParam{
+				messageHistory.Add(openai.ChatCompletionToolMessageParam{
 					Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
 					Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(output)}}),
 					ToolCallID: openai.F(toolCall.ID),
@@ -174,7 +146,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, skill *Skill, skillToolC
 			}
 		}
 	}
-	allMessages := clonedMessages.All()
+	allMessages := messageHistory.All()
 	lastMessage := allMessages[len(allMessages)-1]
 	// If it's a ChatCompletionMessage, convert it to a tool message
 	if chatMsg, ok := lastMessage.(openai.ChatCompletionMessage); ok {

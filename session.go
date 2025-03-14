@@ -35,6 +35,13 @@ type Session struct {
 
 	meta Meta
 
+	// this is a temporary variable that holds the aggregation from outUserChannel. The
+	// contract here is that when session starts, we create an empty string and then aggregate
+	// the text response from the agent. When the session is done (because the conversation is done
+	// or the agent asked a follow up or the user cancel etc), the session must be closed.
+	// When we restart the conversation, if we are restarting again, this variable is set to an empty string again
+	aggregatedResponse string
+
 	logger *slog.Logger
 }
 
@@ -59,6 +66,8 @@ func NewSession(ctx context.Context, llm *LLM, mem Memory, ag *Agent, storage St
 
 		meta: meta,
 
+		aggregatedResponse: "",
+
 		logger: slog.Default(),
 	}
 	go s.run()
@@ -72,7 +81,11 @@ func (s *Session) In(userMessage string) {
 
 // Out retrieves the next message from the output channel, blocking until a message is available.
 func (s *Session) Out() Response {
-	return <-s.outUserChannel
+	response := <-s.outUserChannel
+	if response.Type == ResponseTypePartialText {
+		s.aggregatedResponse += response.Content
+	}
+	return response
 }
 
 // Close ends the session lifecycle and releases any resources if needed.
@@ -81,13 +94,6 @@ func (s *Session) Close() {
 		s.cancel()
 		close(s.inUserChannel)
 	})
-}
-
-func (s *Session) sendStatus(msg string) {
-	s.outUserChannel <- Response{
-		Content: msg,
-		Type:    ResponseTypeStatus,
-	}
 }
 
 // run is the main loop for the session. It listens for user messages and process here. Although
@@ -112,32 +118,29 @@ func (s *Session) run() {
 			s.logger.Error("Error creating conversation", "error", err)
 		}
 
-		outAgentChannel, err := s.agent.Run(s.ctx, s.llm, s.sendStatus, s.storage)
+		// Prepare session message history and validate state
+		messageHistory, err := CompileConversationHistory(s.meta, s.storage)
 		if err != nil {
-			s.outUserChannel <- Response{
-				Content: err.Error(),
-				Type:    ResponseTypeError,
-			}
-		}
-		aggregated := ""
-		for chunk := range outAgentChannel {
-			// We'll wait for the channel to close
-			if len(chunk) > 0 {
-				aggregated += chunk
-				s.outUserChannel <- Response{
-					Content: chunk,
-					Type:    ResponseTypePartialText,
-				}
-			}
+			s.logger.Error("Error compiling conversation history", "error", err)
+			return
 		}
 
+		userInfo, err := s.storage.GetUserInfo(s.meta)
+		if err != nil {
+			s.logger.Error("Error getting user info", "error", err)
+			return
+		}
+
+		// running the agent. Agent handles errors internally and sends the response to the outUserChannel
+		s.agent.Run(s.ctx, s.llm, messageHistory, userInfo, s.outUserChannel)
+
 		// Finish the conversation in the store
-		err = s.storage.FinishConversation(s.meta, aggregated)
+		err = s.storage.FinishConversation(s.meta, s.aggregatedResponse)
 		if err != nil {
 			s.logger.Error("Error finishing conversation", "error", err)
 		}
 
-		// channel is closed, send the final message
+		// Run method is done, send the final message
 		s.outUserChannel <- Response{
 			Type: ResponseTypeEnd,
 		}

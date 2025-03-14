@@ -54,37 +54,76 @@ func (b *BestAppleFinder) Execute(args map[string]interface{}) (string, error) {
 
 // MockStorage implements the Storage interface for testing
 type MockStorage struct {
-	ConversationFn func(*agentpod.Session, int, int) (agentpod.MessageList, error)
-	UserInfoFn     func(*agentpod.Session) (agentpod.UserInfo, error)
+	ConversationFn  func(agentpod.Meta, int, int) (*agentpod.MessageList, error)
+	UserInfoFn      func(agentpod.Meta) (*agentpod.UserInfo, error)
+	CreateMessageFn func(meta agentpod.Meta, userMessage string) error
+	userMessages    map[string]string // Maps sessionID to userMessage
+	wasCalled       map[string]bool   // Tracks if methods were called
 }
 
 // GetConversations returns the conversation history
-func (m *MockStorage) GetConversations(session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
-	return m.ConversationFn(session, limit, offset)
+func (m *MockStorage) GetConversations(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
+	return m.ConversationFn(meta, limit, offset)
 }
 
-// SaveConversation is a no-op for testing
-func (m *MockStorage) CreateConversation(session *agentpod.Session, userMessage string) error {
+// CreateConversation records the user message
+func (m *MockStorage) CreateConversation(meta agentpod.Meta, userMessage string) error {
+	if m.userMessages == nil {
+		m.userMessages = make(map[string]string)
+	}
+	if m.wasCalled == nil {
+		m.wasCalled = make(map[string]bool)
+	}
+
+	m.userMessages[meta.SessionID] = userMessage
+	m.wasCalled["CreateConversation"] = true
+
+	if m.CreateMessageFn != nil {
+		return m.CreateMessageFn(meta, userMessage)
+	}
 	return nil
 }
 
-func (m *MockStorage) FinishConversation(session *agentpod.Session, assistantMessage string) error {
+func (m *MockStorage) WasCreateConversationCalled() bool {
+	if m.wasCalled == nil {
+		return false
+	}
+	return m.wasCalled["CreateConversation"]
+}
+
+func (m *MockStorage) GetUserMessage(sessionID string) string {
+	if m.userMessages == nil {
+		return ""
+	}
+	return m.userMessages[sessionID]
+}
+
+func (m *MockStorage) FinishConversation(meta agentpod.Meta, assistantMessage string) error {
 	return nil
 }
 
 // GetUserInfo returns user information
-func (m *MockStorage) GetUserInfo(session *agentpod.Session) (agentpod.UserInfo, error) {
-	return m.UserInfoFn(session)
+func (m *MockStorage) GetUserInfo(meta agentpod.Meta) (*agentpod.UserInfo, error) {
+	return m.UserInfoFn(meta)
 }
 
-// Default empty conversation history function
-func getEmptyConversationHistory(session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
-	return agentpod.MessageList{}, nil
+// Default empty conversation history function that includes the user message if available
+func getEmptyConversationHistory(s *MockStorage) func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
+	return func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
+		messages := agentpod.MessageList{}
+
+		// If CreateConversation was called, include that message
+		if userMsg := s.GetUserMessage(meta.SessionID); userMsg != "" {
+			messages.Add(agentpod.UserMessage(userMsg))
+		}
+
+		return &messages, nil
+	}
 }
 
 // Default user info function
-func getDefaultUserInfo(session *agentpod.Session) (agentpod.UserInfo, error) {
-	return agentpod.UserInfo{
+func getDefaultUserInfo(meta agentpod.Meta) (*agentpod.UserInfo, error) {
+	return &agentpod.UserInfo{
 		Name: "John Doe",
 	}, nil
 }
@@ -95,27 +134,29 @@ func TestSimpleConversation(t *testing.T) {
 		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
 	}
 
-	llmConfig := agentpod.LLMConfig{
-		BaseURL: config.KeywordsAIEndpoint,
-		APIKey:  config.KeywordsAIAPIKey,
-		Model:   "azure/o3-mini",
-	}
+	llm := agentpod.NewLLM(
+		config.KeywordsAIAPIKey,
+		config.KeywordsAIEndpoint,
+		"azure/gpt-4o",
+		"azure/gpt-4o",
+	)
 	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says.", []agentpod.Skill{})
 
 	// Create a mock storage with empty conversation history
 	storage := &MockStorage{
-		ConversationFn: getEmptyConversationHistory,
-		UserInfoFn:     getDefaultUserInfo,
+		UserInfoFn: getDefaultUserInfo,
 	}
+	storage.ConversationFn = getEmptyConversationHistory(storage)
 
-	pod := agentpod.NewPod(&llmConfig, mem, ai, storage)
-	ctx := context.Background()
 	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
 	userID := GenerateNewTestID()
-	convSession := pod.NewSession(ctx, orgID, sessionID, map[string]string{"user_id": userID})
-
+	convSession := agentpod.NewSession(context.Background(), llm, mem, ai, storage, agentpod.Meta{
+		CustomerID: orgID,
+		SessionID:  sessionID,
+		Extra:      map[string]string{"user_id": userID},
+	})
 	convSession.In("test confirmed")
 
 	var finalContent string
@@ -130,6 +171,14 @@ func TestSimpleConversation(t *testing.T) {
 	if finalContent != "test confirmed" {
 		t.Fatal("Expected 'test confirmed', got:", finalContent)
 	}
+
+	// Verify CreateConversation was called with the correct message
+	if !storage.WasCreateConversationCalled() {
+		t.Fatal("Expected CreateConversation to be called")
+	}
+	if storage.GetUserMessage(sessionID) != "test confirmed" {
+		t.Fatalf("Expected user message to be 'test confirmed', got: %s", storage.GetUserMessage(sessionID))
+	}
 }
 
 func TestConversationWithSkills(t *testing.T) {
@@ -138,11 +187,12 @@ func TestConversationWithSkills(t *testing.T) {
 		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
 	}
 
-	llmConfig := agentpod.LLMConfig{
-		BaseURL: config.KeywordsAIEndpoint,
-		APIKey:  config.KeywordsAIAPIKey,
-		Model:   "azure/o3-mini",
-	}
+	llm := agentpod.NewLLM(
+		config.KeywordsAIAPIKey,
+		config.KeywordsAIEndpoint,
+		"azure/gpt-4o",
+		"azure/gpt-4o",
+	)
 	mem := &agentpod.Zep{}
 	skill := agentpod.Skill{
 		Name:         "AppleExpert",
@@ -159,16 +209,18 @@ func TestConversationWithSkills(t *testing.T) {
 
 	// Create a mock storage with empty conversation history
 	storage := &MockStorage{
-		ConversationFn: getEmptyConversationHistory,
-		UserInfoFn:     getDefaultUserInfo,
+		UserInfoFn: getDefaultUserInfo,
 	}
+	storage.ConversationFn = getEmptyConversationHistory(storage)
 
-	pod := agentpod.NewPod(&llmConfig, mem, agent, storage)
-	ctx := context.Background()
 	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
 	userID := GenerateNewTestID()
-	convSession := pod.NewSession(ctx, orgID, sessionID, map[string]string{"user_id": userID})
+	convSession := agentpod.NewSession(context.Background(), llm, mem, agent, storage, agentpod.Meta{
+		CustomerID: orgID,
+		SessionID:  sessionID,
+		Extra:      map[string]string{"user_id": userID},
+	})
 
 	convSession.In("Which apple is the best?")
 	var finalContent string
@@ -182,16 +234,34 @@ func TestConversationWithSkills(t *testing.T) {
 	if !strings.Contains(strings.ToLower(finalContent), "green apple") {
 		t.Fatal("Expected 'green apple' to be in the final content, got:", finalContent)
 	}
+
+	// Verify CreateConversation was called with the correct message
+	if !storage.WasCreateConversationCalled() {
+		t.Fatal("Expected CreateConversation to be called")
+	}
+	if storage.GetUserMessage(sessionID) != "Which apple is the best?" {
+		t.Fatalf("Expected user message to be 'Which apple is the best?', got: %s", storage.GetUserMessage(sessionID))
+	}
 }
 
 // Function for non-empty conversation history
-func getNonEmptyConversationHistory(session *agentpod.Session, limit int, offset int) (agentpod.MessageList, error) {
-	messages := agentpod.MessageList{}
-	messages.Add(
-		agentpod.UserMessage("Can you tell me which color is apple?"),
-		agentpod.AssistantMessage("The apple is generally red"),
-	)
-	return messages, nil
+func getNonEmptyConversationHistory(s *MockStorage) func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
+	return func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
+		messages := agentpod.MessageList{}
+
+		// Add pre-existing conversation history
+		messages.Add(
+			agentpod.UserMessage("Can you tell me which color is apple?"),
+			agentpod.AssistantMessage("The apple is generally red"),
+		)
+
+		// If CreateConversation was called, include that new message as well
+		if userMsg := s.GetUserMessage(meta.SessionID); userMsg != "" {
+			messages.Add(agentpod.UserMessage(userMsg))
+		}
+
+		return &messages, nil
+	}
 }
 
 func TestConversationWithHistory(t *testing.T) {
@@ -200,26 +270,29 @@ func TestConversationWithHistory(t *testing.T) {
 		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
 	}
 
-	llmConfig := agentpod.LLMConfig{
-		BaseURL: config.KeywordsAIEndpoint,
-		APIKey:  config.KeywordsAIAPIKey,
-		Model:   "azure/o3-mini",
-	}
+	llm := agentpod.NewLLM(
+		config.KeywordsAIAPIKey,
+		config.KeywordsAIEndpoint,
+		"azure/gpt-4o",
+		"azure/gpt-4o",
+	)
 	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("You are an assistant!", []agentpod.Skill{})
 
 	// Create a mock storage with non-empty conversation history
 	storage := &MockStorage{
-		ConversationFn: getNonEmptyConversationHistory,
-		UserInfoFn:     getDefaultUserInfo,
+		UserInfoFn: getDefaultUserInfo,
 	}
+	storage.ConversationFn = getNonEmptyConversationHistory(storage)
 
-	pod := agentpod.NewPod(&llmConfig, mem, ai, storage)
-	ctx := context.Background()
 	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
 	userID := GenerateNewTestID()
-	convSession := pod.NewSession(ctx, orgID, sessionID, map[string]string{"user_id": userID})
+	convSession := agentpod.NewSession(context.Background(), llm, mem, ai, storage, agentpod.Meta{
+		CustomerID: orgID,
+		SessionID:  sessionID,
+		Extra:      map[string]string{"user_id": userID},
+	})
 
 	convSession.In("is it a fruit or a vegetable? Answer in one word without extra punctuation.")
 
@@ -234,5 +307,13 @@ func TestConversationWithHistory(t *testing.T) {
 
 	if strings.ToLower(finalContent) != "fruit" {
 		t.Fatal("Expected 'fruit', got:", finalContent)
+	}
+
+	// Verify CreateConversation was called with the correct message
+	if !storage.WasCreateConversationCalled() {
+		t.Fatal("Expected CreateConversation to be called")
+	}
+	if storage.GetUserMessage(sessionID) != "is it a fruit or a vegetable? Answer in one word without extra punctuation." {
+		t.Fatalf("Expected user message to match, got: %s", storage.GetUserMessage(sessionID))
 	}
 }

@@ -59,13 +59,7 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 }
 
 // summarizeMultipleToolResults summarizes results when multiple tools were called
-func (a *Agent) summarizeMultipleToolResults(
-	results map[string]openai.ChatCompletionMessageParamUnion,
-	clonedMessages *MessageList,
-	llmClient *LLM,
-	modelName string,
-	outAgentChannel chan string,
-) {
+func (a *Agent) summarizeMultipleToolResults(results map[string]openai.ChatCompletionMessageParamUnion, clonedMessages *MessageList, llm *LLM) (string, error) {
 	// Prepare the results for the OpenAI API call
 	for _, result := range results {
 		clonedMessages.Add(result)
@@ -73,42 +67,46 @@ func (a *Agent) summarizeMultipleToolResults(
 
 	params := openai.ChatCompletionNewParams{
 		Messages: openai.F(clonedMessages.All()),
-		Model:    openai.F(modelName),
+		Model:    openai.F(llm.GenerationModel),
 		StreamOptions: openai.F(openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: openai.F(true),
 		}),
 	}
 
-	stream := llmClient.NewStreaming(context.Background(), params)
+	stream := llm.NewStreaming(context.Background(), params)
 	defer stream.Close()
+
+	var fullResponse strings.Builder
 
 	for stream.Next() {
 		chunk := stream.Current()
 		if chunk.Choices[0].Delta.Content != "" {
-			outAgentChannel <- chunk.Choices[0].Delta.Content
+			fullResponse.WriteString(chunk.Choices[0].Delta.Content)
 		}
 	}
 
 	if stream.Err() != nil {
 		a.logger.Error("Error streaming", "error", stream.Err())
-		outAgentChannel <- "Error occurred while streaming"
+		return "", stream.Err()
 	}
+
+	return fullResponse.String(), nil
 }
 
 // returnSingleToolResult returns the result when only one tool was called
 func (a *Agent) returnSingleToolResult(
 	completion *openai.ChatCompletion,
 	results map[string]openai.ChatCompletionMessageParamUnion,
-	outAgentChannel chan string,
-) {
+) (string, error) {
 	// If only one skill is called, return the result directly
 	toolCallID := completion.Choices[0].Message.ToolCalls[0].ID
 	resp := results[toolCallID]
 
 	if message, ok := resp.(openai.ChatCompletionToolMessageParam); ok {
-		outAgentChannel <- message.Content.Value[0].Text.Value
+		return message.Content.Value[0].Text.Value, nil
 	} else {
 		a.logger.Error("Unexpected message type")
+		return "", fmt.Errorf("unexpected message type")
 	}
 }
 
@@ -130,13 +128,7 @@ func (a *Agent) ConvertSkillsToTools() []openai.ChatCompletionToolParam {
 }
 
 // chooseSkills gets the initial response from the LLM that chooses the skills
-func (a *Agent) chooseSkills(
-	ctx context.Context,
-	clonedMessages *MessageList,
-	userInfo UserInfo,
-	llmClient *LLM,
-	modelName string,
-) (*openai.ChatCompletion, error) {
+func (a *Agent) chooseSkills(ctx context.Context, llm *LLM, clonedMessages *MessageList, userInfo *UserInfo) (*openai.ChatCompletion, error) {
 	memoryBlocks := make(map[string]string)
 	memoryBlocks["UserName"] = userInfo.Name
 	for key, value := range userInfo.Meta {
@@ -163,13 +155,13 @@ func (a *Agent) chooseSkills(
 
 	params := openai.ChatCompletionNewParams{
 		Messages: openai.F(clonedMessages.All()),
-		Model:    openai.F(modelName),
+		Model:    openai.F(llm.ReasoningModel),
 	}
 	if len(a.ConvertSkillsToTools()) > 0 {
 		params.Tools = openai.F(a.ConvertSkillsToTools())
 	}
 
-	completion, err := llmClient.New(ctx, params)
+	completion, err := llm.New(ctx, params)
 	if err != nil {
 		a.logger.Error("Error getting initial response", "error", err)
 		return nil, err
@@ -216,58 +208,51 @@ func (a *Agent) chooseSkills(
 func (a *Agent) collateSkillCallResults(
 	completion *openai.ChatCompletion,
 	results map[string]openai.ChatCompletionMessageParamUnion,
-	clonedMessages *MessageList,
-	llmClient *LLM,
-	modelName string,
-	outAgentChannel chan string,
-) {
+	messageHistory *MessageList,
+	llm *LLM,
+) (string, error) {
 	// If multiple skills were called, summarize the results
 	if len(completion.Choices[0].Message.ToolCalls) > 1 {
-		a.summarizeMultipleToolResults(results, clonedMessages, llmClient, modelName, outAgentChannel)
+		return a.summarizeMultipleToolResults(results, messageHistory, llm)
 	} else if len(completion.Choices[0].Message.ToolCalls) == 1 {
 		// If only one skill was called, return the result directly
-		a.returnSingleToolResult(completion, results, outAgentChannel)
+		return a.returnSingleToolResult(completion, results)
 	}
+
+	return "", fmt.Errorf("no tool calls found in completion")
 }
 
 // handleLLMError handles errors from LLM API calls
-func (a *Agent) handleLLMError(err error, outAgentChannel chan string) {
+func (a *Agent) handleLLMError(err error, outUserChannel chan Response) {
 	content := "Error occurred!"
 	a.logger.Error("Error streaming", "error", err)
 	if strings.Contains(err.Error(), "ContentPolicyViolationError") {
 		a.logger.Error("Content policy violation!", "error", err)
 		content = "Content policy violation! If this was a mistake, please reach out to the support. Consecutive violations may result in a temporary/permanent ban."
 	}
-	outAgentChannel <- content
+	outUserChannel <- Response{
+		Content: content,
+		Type:    ResponseTypeError,
+	}
 }
 
-// processRequest handles the main logic for processing a request
-func (a *Agent) processRequest(
-	ctx context.Context,
-	session *Session,
-	llmClient *LLM,
-	modelName string,
-	storage Storage,
-	outChan chan string,
-	send_status_func func(msg string),
-) {
-	defer close(outChan)
-
-	userInfo, err := storage.GetUserInfo(session)
-	if err != nil {
-		a.logger.Error("Error getting user info", "error", err)
-		return
+// Run processes a user message through the LLM, executes any requested skills. It returns only after the agent is done.
+// The intermediary messages are sent to the outUserChannel.
+func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, userInfo *UserInfo, outUserChannel chan Response) {
+	if a.logger == nil {
+		panic("logger is not set")
 	}
 
-	// Clone the messages before appending the latest assistant message
-	// Get initial response from LLM
-	completion, err := a.chooseSkills(ctx, session.State.MessageHistory.Clone(), userInfo, llmClient, modelName)
+	completion, err := a.chooseSkills(ctx, llm, messageHistory.Clone(), userInfo)
 	if err != nil {
-		a.handleLLMError(err, outChan)
+		a.handleLLMError(err, outUserChannel)
 		return
 	}
 	if completion.Choices[0].Message.Content != "" {
-		outChan <- completion.Choices[0].Message.Content
+		outUserChannel <- Response{
+			Content: completion.Choices[0].Message.Content,
+			Type:    ResponseTypePartialText,
+		}
 	}
 
 	// If no tool calls were requested, we're done
@@ -289,14 +274,17 @@ func (a *Agent) processRequest(
 		}
 
 		if skill.StatusMessage != "" {
-			send_status_func(skill.StatusMessage)
+			outUserChannel <- Response{
+				Content: skill.StatusMessage,
+				Type:    ResponseTypeStatus,
+			}
 		}
 
 		wg.Add(1)
 		go func(skill *Skill, toolID string) {
 			defer wg.Done()
 			// Clone the messages again so all goroutines get different message history
-			result, err := a.SkillContextRunner(ctx, skill, toolID, session.State.MessageHistory.Clone(), llmClient, modelName, outChan, send_status_func, userInfo)
+			result, err := a.SkillContextRunner(ctx, messageHistory.Clone(), llm, outUserChannel, *userInfo, skill, tool.ID)
 			if err != nil {
 				a.logger.Error("Error running skill", "error", err)
 				return
@@ -311,35 +299,16 @@ func (a *Agent) processRequest(
 	wg.Wait()
 
 	// creating a new cloned message that doesn't have anything from skill context runner but has the tool calls
-	clonedMessages := session.State.MessageHistory.Clone()
-	clonedMessages.Add(completion.Choices[0].Message)
+	messageHistory.Add(completion.Choices[0].Message)
 	// Handle results based on number of tool calls
-	a.collateSkillCallResults(completion, results, clonedMessages, llmClient, modelName, outChan)
-}
-
-// Run processes a user message through the LLM, executes any requested skills,
-// and returns a channel of completion chunks.
-func (a *Agent) Run(
-	ctx context.Context,
-	session *Session,
-	llmClient *LLM,
-	modelName string,
-	send_status_func func(msg string),
-	storage Storage,
-) (chan string, error) {
-	if a.logger == nil {
-		panic("logger is not set")
-	}
-	outAgentChannel := make(chan string)
-
-	// Prepare session message history and validate state
-	if err := CompileConversationHistory(session, storage); err != nil {
-		a.logger.Error(err.Error())
-		return nil, err
+	collatedResult, err := a.collateSkillCallResults(completion, results, messageHistory, llm)
+	if err != nil {
+		a.handleLLMError(err, outUserChannel)
+		return
 	}
 
-	// Process the request asynchronously
-	go a.processRequest(ctx, session, llmClient, modelName, storage, outAgentChannel, send_status_func)
-
-	return outAgentChannel, nil
+	outUserChannel <- Response{
+		Content: collatedResult,
+		Type:    ResponseTypePartialText,
+	}
 }
