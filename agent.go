@@ -155,7 +155,7 @@ func (a *Agent) chooseSkills(ctx context.Context, llm *LLM, clonedMessages *Mess
 
 	params := openai.ChatCompletionNewParams{
 		Messages: openai.F(clonedMessages.All()),
-		Model:    openai.F(llm.ReasoningModel),
+		Model:    openai.F(llm.GenerationModel),
 	}
 	if len(a.ConvertSkillsToTools()) > 0 {
 		params.Tools = openai.F(a.ConvertSkillsToTools())
