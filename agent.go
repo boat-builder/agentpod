@@ -243,6 +243,18 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		panic("logger is not set")
 	}
 
+	// making sure we send the end response when the agent is done
+	defer func() {
+		defer func() {
+			if r := recover(); r != nil {
+				a.logger.Error("Panic when sending end response", "error", r)
+			}
+		}()
+		outUserChannel <- Response{
+			Type: ResponseTypeEnd,
+		}
+	}()
+
 	completion, err := a.chooseSkills(ctx, llm, messageHistory.Clone(), userInfo)
 	if err != nil {
 		a.handleLLMError(err, outUserChannel)

@@ -35,13 +35,6 @@ type Session struct {
 
 	meta Meta
 
-	// this is a temporary variable that holds the aggregation from outUserChannel. The
-	// contract here is that when session starts, we create an empty string and then aggregate
-	// the text response from the agent. When the session is done (because the conversation is done
-	// or the agent asked a follow up or the user cancel etc), the session must be closed.
-	// When we restart the conversation, if we are restarting again, this variable is set to an empty string again
-	aggregatedResponse string
-
 	logger *slog.Logger
 }
 
@@ -66,8 +59,6 @@ func NewSession(ctx context.Context, llm *LLM, mem Memory, ag *Agent, storage St
 
 		meta: meta,
 
-		aggregatedResponse: "",
-
 		logger: slog.Default(),
 	}
 	go s.run()
@@ -82,9 +73,6 @@ func (s *Session) In(userMessage string) {
 // Out retrieves the next message from the output channel, blocking until a message is available.
 func (s *Session) Out() Response {
 	response := <-s.outUserChannel
-	if response.Type == ResponseTypePartialText {
-		s.aggregatedResponse += response.Content
-	}
 	return response
 }
 
@@ -131,11 +119,31 @@ func (s *Session) run() {
 			return
 		}
 
-		// running the agent. Agent handles errors internally and sends the response to the outUserChannel
-		s.agent.Run(s.ctx, s.llm, messageHistory, userInfo, s.outUserChannel)
+		// We use a two-channel approach to ensure proper message aggregation:
+		// 1. An internal channel receives all agent responses
+		// 2. These responses are processed sequentially in this goroutine
+		// 3. Messages are aggregated here before being sent to storage
+		// This prevents race conditions between aggregation and storage operations
+		internalChannel := make(chan Response)
+		var aggregatedResponse string
 
-		// Finish the conversation in the store
-		err = s.storage.FinishConversation(s.meta, s.aggregatedResponse)
+		// Ensure channel is closed when we're done with it
+		defer close(internalChannel)
+
+		go s.agent.Run(s.ctx, s.llm, messageHistory, userInfo, internalChannel)
+
+		for response := range internalChannel {
+			s.outUserChannel <- response
+			if response.Type == ResponseTypePartialText {
+				aggregatedResponse += response.Content
+			}
+			if response.Type == ResponseTypeEnd {
+				break
+			}
+		}
+
+		// Finish the conversation in the store with the fully aggregated response
+		err = s.storage.FinishConversation(s.meta, aggregatedResponse)
 		if err != nil {
 			s.logger.Error("Error finishing conversation", "error", err)
 		}

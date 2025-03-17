@@ -49,7 +49,7 @@ func (a *Agent) GenerateSummary(ctx context.Context, messages *MessageList, llmC
 	return completion.Choices[0].Message.Content, nil
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outAgentChannel chan Response, userInfo UserInfo, skill *Skill, skillToolCallID string) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outChan chan Response, userInfo UserInfo, skill *Skill, skillToolCallID string) (openai.ChatCompletionMessageParamUnion, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 	memoryBlocks := make(map[string]string)
 	memoryBlocks["UserName"] = userInfo.Name
@@ -69,11 +69,32 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 	}
 	messageHistory.AddFirst(systemPrompt)
 
+	// we'll make the first request to build the strategy. But this time, we won't provide tools as tools.
+	// We just include them in the message history as developer prompt.
+	toolsDescription := skill.Spec()
+
+	strategyPrompt := fmt.Sprintf("You have access to below tools. Understand user's question and make a detailed plan on how to answer the question (using the tools if necessary).\n\n%s", toolsDescription)
+	userMessage := messageHistory.All()[len(messageHistory.All())-1]
+	messageHistory.ReplaceAt(len(messageHistory.All())-1, DeveloperMessage(strategyPrompt))
+	messageHistory.Add(userMessage)
+	params := openai.ChatCompletionNewParams{
+		Messages:        openai.F(messageHistory.All()),
+		Model:           openai.F(llm.ReasoningModel),
+		ReasoningEffort: openai.F(openai.ChatCompletionReasoningEffortHigh),
+	}
+	a.logger.Info("Getting strategy from LLM")
+	completion, err := llm.New(ctx, params)
+	if err != nil {
+		a.logger.Error("Error calling LLM while running skill", "error", err)
+		return nil, err
+	}
+	messageHistory.Add(completion.Choices[0].Message)
+
 	for {
-		// We add a developer message just for this loop (not to the history) to ensure the LLM doesn't output anything except the necessary tool to be called.
 		params := openai.ChatCompletionNewParams{
-			Messages: openai.F(messageHistory.All()),
-			Model:    openai.F(llm.ReasoningModel),
+			Messages:        openai.F(messageHistory.All()),
+			Model:           openai.F(llm.ReasoningModel),
+			ReasoningEffort: openai.F(openai.ChatCompletionReasoningEffortHigh),
 		}
 		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
 		if len(skill.GetTools()) > 0 {
@@ -105,7 +126,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 				continue
 			}
 			if tool.StatusMessage() != "" {
-				outAgentChannel <- Response{
+				outChan <- Response{
 					Content: tool.StatusMessage(),
 					Type:    ResponseTypeStatus,
 				}
