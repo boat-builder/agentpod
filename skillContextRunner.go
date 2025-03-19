@@ -58,22 +58,30 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		memoryBlocks[key] = value
 	}
 
-	systemPromptData := prompts.SkillContextRunnerPromptData{
+	promptData := prompts.SkillContextRunnerPromptData{
 		MainAgentSystemPrompt: a.prompt,
 		SkillSystemPrompt:     skill.SystemPrompt,
 		MemoryBlocks:          memoryBlocks,
 	}
-	systemPrompt, err := prompts.SkillContextRunnerPrompt(systemPromptData)
+	systemPrompt, err := prompts.SkillContextRunnerPrompt(promptData)
 	if err != nil {
 		a.logger.Error("Error getting system prompt", "error", err)
 		return nil, err
 	}
 	messageHistory.AddFirst(systemPrompt)
 
+	isFirstIteration := true
 	for {
+		// First iteration is when the main planning happens - use the bigger model.
+		modelToUse := llm.SmallReasoningModel
+		if isFirstIteration {
+			modelToUse = llm.ReasoningModel
+			isFirstIteration = false
+		}
+
 		params := openai.ChatCompletionNewParams{
 			Messages:        openai.F(messageHistory.All()),
-			Model:           openai.F(llm.ReasoningModel),
+			Model:           openai.F(modelToUse),
 			ReasoningEffort: openai.F(openai.ChatCompletionReasoningEffortHigh),
 		}
 		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
