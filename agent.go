@@ -248,6 +248,7 @@ func (a *Agent) sendThoughtsAboutSkills(ctx context.Context, llm *LLM, messageHi
 	- Do not mention about the tools or details about the tools like SQL, Python API etc. 
 	- You can mention about what you are trying to achieve by mentioning what these tools enable you to do. For example, if an SQL table enable you to get latest whether, you can say "I am getting whether data" instead of "I'll look at the SQL database for whether data".
 	- Make it very detailed.
+	- Strictly do not answer the question. You are just planning.
 
 	Here are the details about the tools:
 	`
