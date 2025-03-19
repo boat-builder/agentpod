@@ -139,6 +139,8 @@ func TestSimpleConversation(t *testing.T) {
 		config.KeywordsAIEndpoint,
 		"azure/gpt-4o",
 		"azure/gpt-4o",
+		"azure/gpt-4o-mini",
+		"azure/gpt-4o-mini",
 	)
 	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says.", []agentpod.Skill{})
@@ -192,6 +194,8 @@ func TestConversationWithSkills(t *testing.T) {
 		config.KeywordsAIEndpoint,
 		"azure/gpt-4o",
 		"azure/gpt-4o",
+		"azure/gpt-4o-mini",
+		"azure/gpt-4o-mini",
 	)
 	mem := &agentpod.Zep{}
 	skill := agentpod.Skill{
@@ -275,6 +279,8 @@ func TestConversationWithHistory(t *testing.T) {
 		config.KeywordsAIEndpoint,
 		"azure/gpt-4o",
 		"azure/gpt-4o",
+		"azure/gpt-4o-mini",
+		"azure/gpt-4o-mini",
 	)
 	mem := &agentpod.Zep{}
 	ai := agentpod.NewAgent("You are an assistant!", []agentpod.Skill{})

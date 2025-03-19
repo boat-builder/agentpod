@@ -13,14 +13,16 @@ import (
 type ContextKey string
 
 type LLM struct {
-	APIKey          string
-	BaseURL         string
-	ReasoningModel  string
-	GenerationModel string
-	client          *openai.Client
+	APIKey               string
+	BaseURL              string
+	ReasoningModel       string
+	GenerationModel      string
+	SmallReasoningModel  string
+	SmallGenerationModel string
+	client               *openai.Client
 }
 
-func NewLLM(apiKey string, baseURL string, reasoningModel string, generationModel string) *LLM {
+func NewLLM(apiKey string, baseURL string, reasoningModel string, generationModel string, smallReasoningModel string, smallGenerationModel string) *LLM {
 	var client *openai.Client
 	if baseURL != "" {
 		client = openai.NewClient(option.WithBaseURL(baseURL), option.WithAPIKey(apiKey))
@@ -28,11 +30,13 @@ func NewLLM(apiKey string, baseURL string, reasoningModel string, generationMode
 		client = openai.NewClient(option.WithAPIKey(apiKey))
 	}
 	return &LLM{
-		APIKey:          apiKey,
-		BaseURL:         baseURL,
-		ReasoningModel:  reasoningModel,
-		GenerationModel: generationModel,
-		client:          client,
+		APIKey:               apiKey,
+		BaseURL:              baseURL,
+		ReasoningModel:       reasoningModel,
+		GenerationModel:      generationModel,
+		SmallReasoningModel:  smallReasoningModel,
+		SmallGenerationModel: smallGenerationModel,
+		client:               client,
 	}
 }
 

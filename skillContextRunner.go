@@ -51,6 +51,7 @@ func (a *Agent) GenerateSummary(ctx context.Context, messages *MessageList, llmC
 
 func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outChan chan Response, userInfo UserInfo, skill *Skill, skillToolCallID string) (openai.ChatCompletionMessageParamUnion, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
+
 	memoryBlocks := make(map[string]string)
 	memoryBlocks["UserName"] = userInfo.Name
 	for key, value := range userInfo.Meta {
@@ -58,9 +59,9 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 	}
 
 	systemPromptData := prompts.SkillContextRunnerPromptData{
-		UserSystemPrompt:  a.prompt,
-		SkillSystemPrompt: skill.SystemPrompt,
-		MemoryBlocks:      memoryBlocks,
+		MainAgentSystemPrompt: a.prompt,
+		SkillSystemPrompt:     skill.SystemPrompt,
+		MemoryBlocks:          memoryBlocks,
 	}
 	systemPrompt, err := prompts.SkillContextRunnerPrompt(systemPromptData)
 	if err != nil {
@@ -68,27 +69,6 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		return nil, err
 	}
 	messageHistory.AddFirst(systemPrompt)
-
-	// we'll make the first request to build the strategy. But this time, we won't provide tools as tools.
-	// We just include them in the message history as developer prompt.
-	toolsDescription := skill.Spec()
-
-	strategyPrompt := fmt.Sprintf("You have access to below tools. Understand user's question and make a detailed plan on how to answer the question (using the tools if necessary).\n\n%s", toolsDescription)
-	userMessage := messageHistory.All()[len(messageHistory.All())-1]
-	messageHistory.ReplaceAt(len(messageHistory.All())-1, DeveloperMessage(strategyPrompt))
-	messageHistory.Add(userMessage)
-	params := openai.ChatCompletionNewParams{
-		Messages:        openai.F(messageHistory.All()),
-		Model:           openai.F(llm.ReasoningModel),
-		ReasoningEffort: openai.F(openai.ChatCompletionReasoningEffortHigh),
-	}
-	a.logger.Info("Getting strategy from LLM")
-	completion, err := llm.New(ctx, params)
-	if err != nil {
-		a.logger.Error("Error calling LLM while running skill", "error", err)
-		return nil, err
-	}
-	messageHistory.Add(completion.Choices[0].Message)
 
 	for {
 		params := openai.ChatCompletionNewParams{
@@ -100,6 +80,11 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		if len(skill.GetTools()) > 0 {
 			params.Tools = openai.F(skill.GetTools())
 		}
+
+		// we need this because we need to send thoughts to the user. The thoughts sending go routine
+		// doesn't get the tool calls from here tool calls but instead as an assistant message
+		messageHistoryBeforeLLMCall := messageHistory.Clone()
+
 		completion, err := llm.New(ctx, params)
 		if err != nil {
 			a.logger.Error("Error calling LLM while running skill", "error", err)
@@ -117,6 +102,10 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		if completion.Choices[0].Message.ToolCalls == nil {
 			break
 		}
+
+		// sending fake thoughts to the user to keep the user engaged
+		toolsToCall := completion.Choices[0].Message.ToolCalls
+		go a.sendThoughtsAboutTools(ctx, llm, messageHistoryBeforeLLMCall, toolsToCall, outChan)
 
 		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
 			tool, err := skill.GetTool(toolCall.Function.Name)
