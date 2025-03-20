@@ -78,7 +78,6 @@ func (b *BestAppleFinder) Execute(args map[string]interface{}) (string, error) {
 // MockStorage implements the Storage interface for testing
 type MockStorage struct {
 	ConversationFn  func(agentpod.Meta, int, int) (*agentpod.MessageList, error)
-	UserInfoFn      func(agentpod.Meta) (*agentpod.UserInfo, error)
 	CreateMessageFn func(meta agentpod.Meta, userMessage string) error
 	userMessages    map[string]string // Maps sessionID to userMessage
 	wasCalled       map[string]bool   // Tracks if methods were called
@@ -125,11 +124,6 @@ func (m *MockStorage) FinishConversation(meta agentpod.Meta, assistantMessage st
 	return nil
 }
 
-// GetUserInfo returns user information
-func (m *MockStorage) GetUserInfo(meta agentpod.Meta) (*agentpod.UserInfo, error) {
-	return m.UserInfoFn(meta)
-}
-
 // Default empty conversation history function that includes the user message if available
 func getEmptyConversationHistory(s *MockStorage) func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
 	return func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
@@ -142,13 +136,6 @@ func getEmptyConversationHistory(s *MockStorage) func(meta agentpod.Meta, limit 
 
 		return &messages, nil
 	}
-}
-
-// Default user info function
-func getDefaultUserInfo(meta agentpod.Meta) (*agentpod.UserInfo, error) {
-	return &agentpod.UserInfo{
-		Name: "John Doe",
-	}, nil
 }
 
 func TestSimpleConversation(t *testing.T) {
@@ -169,9 +156,7 @@ func TestSimpleConversation(t *testing.T) {
 	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says exactly as they say it, even the punctuation and cases.", []agentpod.Skill{})
 
 	// Create a mock storage with empty conversation history
-	storage := &MockStorage{
-		UserInfoFn: getDefaultUserInfo,
-	}
+	storage := &MockStorage{}
 	storage.ConversationFn = getEmptyConversationHistory(storage)
 
 	orgID := GenerateNewTestID()
@@ -238,9 +223,7 @@ func TestConversationWithSkills(t *testing.T) {
 	agent := agentpod.NewAgent("You are a good farmer. You answer user questions briefly and concisely. You do not add any extra information but just answer user questions in fewer words possible.", []agentpod.Skill{skill})
 
 	// Create a mock storage with empty conversation history
-	storage := &MockStorage{
-		UserInfoFn: getDefaultUserInfo,
-	}
+	storage := &MockStorage{}
 	storage.ConversationFn = getEmptyConversationHistory(storage)
 
 	orgID := GenerateNewTestID()
@@ -314,9 +297,7 @@ func TestConversationWithHistory(t *testing.T) {
 	ai := agentpod.NewAgent("You are an assistant!", []agentpod.Skill{})
 
 	// Create a mock storage with non-empty conversation history
-	storage := &MockStorage{
-		UserInfoFn: getDefaultUserInfo,
-	}
+	storage := &MockStorage{}
 	storage.ConversationFn = getNonEmptyConversationHistory(storage)
 
 	orgID := GenerateNewTestID()
@@ -349,5 +330,74 @@ func TestConversationWithHistory(t *testing.T) {
 	}
 	if storage.GetUserMessage(sessionID) != "is it a fruit or a vegetable? Answer in one word without extra punctuation." {
 		t.Fatalf("Expected user message to match, got: %s", storage.GetUserMessage(sessionID))
+	}
+}
+
+// Function to create memory with country information
+func getCountryMemory(meta *agentpod.Meta) (*agentpod.MemoryBlock, error) {
+	memoryBlock := agentpod.NewMemoryBlock()
+	userDetailsBlock := agentpod.NewMemoryBlock()
+	userDetailsBlock.AddString("country", "United Kingdom")
+	memoryBlock.AddBlock("UserDetails", userDetailsBlock)
+	return memoryBlock, nil
+}
+
+func TestMemoryRetrieval(t *testing.T) {
+	config := LoadConfig()
+	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
+		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
+	}
+
+	llm := agentpod.NewLLM(
+		config.KeywordsAIAPIKey,
+		config.KeywordsAIEndpoint,
+		"azure/gpt-4o",
+		"azure/gpt-4o",
+		"azure/gpt-4o-mini",
+		"azure/gpt-4o-mini",
+	)
+
+	// Create mock memory with country information
+	mem := &MockMemory{
+		RetrieveFn: getCountryMemory,
+	}
+
+	ai := agentpod.NewAgent("You are a helpful assistant. Answer questions based on the user's information.", []agentpod.Skill{})
+
+	// Create a mock storage with empty conversation history
+	storage := &MockStorage{}
+	storage.ConversationFn = getEmptyConversationHistory(storage)
+
+	orgID := GenerateNewTestID()
+	sessionID := GenerateNewTestID()
+	userID := GenerateNewTestID()
+
+	convSession := agentpod.NewSession(context.Background(), llm, mem, ai, storage, agentpod.Meta{
+		CustomerID: orgID,
+		SessionID:  sessionID,
+		Extra:      map[string]string{"user_id": userID},
+	})
+
+	convSession.In("Which country am I from?")
+
+	var finalContent string
+	for {
+		out := convSession.Out()
+		finalContent += out.Content
+		if out.Type == agentpod.ResponseTypeEnd {
+			break
+		}
+	}
+
+	if !strings.Contains(strings.ToLower(finalContent), "united kingdom") {
+		t.Fatal("Expected response to contain 'United Kingdom', got:", finalContent)
+	}
+
+	// Verify CreateConversation was called with the correct message
+	if !storage.WasCreateConversationCalled() {
+		t.Fatal("Expected CreateConversation to be called")
+	}
+	if storage.GetUserMessage(sessionID) != "Which country am I from?" {
+		t.Fatalf("Expected user message to be 'Which country am I from?', got: %s", storage.GetUserMessage(sessionID))
 	}
 }
