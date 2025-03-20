@@ -14,11 +14,6 @@ type Meta struct {
 	Extra      map[string]string
 }
 
-type UserInfo struct {
-	Name string
-	Meta map[string]string
-}
-
 // Session holds ephemeral conversation data & references to global resources.
 type Session struct {
 	ctx       context.Context
