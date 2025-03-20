@@ -13,6 +13,8 @@ const (
 	GPT4oMiniOutputRate = 0.60
 	O3MiniInputRate     = 1.10
 	O3MiniOutputRate    = 4.40
+	O1InputRate         = 15.0
+	O1OutputRate        = 60.0
 )
 
 // ModelPricings is a map of model names to their pricing information
@@ -29,6 +31,10 @@ var ModelPricings = map[string]TokenRates{
 		Input:  O3MiniInputRate,
 		Output: O3MiniOutputRate,
 	},
+	"o1": {
+		Input:  O3MiniInputRate,
+		Output: O3MiniOutputRate,
+	},
 	"azure/gpt-4o": {
 		Input:  GPT4oInputRate,
 		Output: GPT4oOutputRate,
@@ -38,6 +44,10 @@ var ModelPricings = map[string]TokenRates{
 		Output: GPT4oMiniOutputRate,
 	},
 	"azure/o3-mini": {
+		Input:  O3MiniInputRate,
+		Output: O3MiniOutputRate,
+	},
+	"azure/o1": {
 		Input:  O3MiniInputRate,
 		Output: O3MiniOutputRate,
 	},
