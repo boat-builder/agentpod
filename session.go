@@ -113,7 +113,7 @@ func (s *Session) run() {
 			return
 		}
 
-		userInfo, err := s.storage.GetUserInfo(s.meta)
+		memoryBlock, err := s.memory.Retrieve(&s.meta)
 		if err != nil {
 			s.logger.Error("Error getting user info", "error", err)
 			return
@@ -130,7 +130,7 @@ func (s *Session) run() {
 		// Ensure channel is closed when we're done with it
 		defer close(internalChannel)
 
-		go s.agent.Run(s.ctx, s.llm, messageHistory, userInfo, internalChannel)
+		go s.agent.Run(s.ctx, s.llm, messageHistory, memoryBlock, internalChannel)
 
 		for response := range internalChannel {
 			s.outUserChannel <- response

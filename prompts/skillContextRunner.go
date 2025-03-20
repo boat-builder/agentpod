@@ -4,7 +4,7 @@ package prompts
 type SkillContextRunnerPromptData struct {
 	MainAgentSystemPrompt string
 	SkillSystemPrompt     string
-	MemoryBlocks          map[string]string
+	MemoryBlocks          string
 }
 
 // SkillSelectionPromptTemplate is the template for skill selection prompts.
@@ -13,8 +13,9 @@ const SkillContextRunnerPromptTemplate = `
 
 {{ .SkillSystemPrompt }}
 
+All the memory learned from user's previous interactions are provided below. Use it as the context to answer the user's question.
 
-{{ formatMemoryBlocks .MemoryBlocks }}`
+{{ .MemoryBlocks }}`
 
 // SkillSelectionPrompt creates the skill selection prompt by applying the provided data.
 func SkillContextRunnerPrompt(data SkillContextRunnerPromptData) (string, error) {

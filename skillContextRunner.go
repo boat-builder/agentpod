@@ -49,19 +49,13 @@ func (a *Agent) GenerateSummary(ctx context.Context, messages *MessageList, llmC
 	return completion.Choices[0].Message.Content, nil
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outChan chan Response, userInfo UserInfo, skill *Skill, skillToolCallID string) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string) (openai.ChatCompletionMessageParamUnion, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
-
-	memoryBlocks := make(map[string]string)
-	memoryBlocks["UserName"] = userInfo.Name
-	for key, value := range userInfo.Meta {
-		memoryBlocks[key] = value
-	}
 
 	promptData := prompts.SkillContextRunnerPromptData{
 		MainAgentSystemPrompt: a.prompt,
 		SkillSystemPrompt:     skill.SystemPrompt,
-		MemoryBlocks:          memoryBlocks,
+		MemoryBlocks:          memoryBlock.Parse(),
 	}
 	systemPrompt, err := prompts.SkillContextRunnerPrompt(promptData)
 	if err != nil {

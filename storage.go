@@ -13,7 +13,4 @@ type Storage interface {
 	GetConversations(meta Meta, limit int, offset int) (*MessageList, error)
 	CreateConversation(meta Meta, userMessage string) error
 	FinishConversation(meta Meta, assistantMessage string) error
-
-	// TODO - probably should be removed user related
-	GetUserInfo(meta Meta) (*UserInfo, error)
 }

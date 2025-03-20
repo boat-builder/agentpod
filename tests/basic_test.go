@@ -9,6 +9,29 @@ import (
 	"github.com/openai/openai-go"
 )
 
+// MockMemory implements the Memory interface for testing
+type MockMemory struct {
+	RetrieveFn func(*agentpod.Meta) (*agentpod.MemoryBlock, error)
+}
+
+// Retrieve returns a memory block for testing
+func (m *MockMemory) Retrieve(meta *agentpod.Meta) (*agentpod.MemoryBlock, error) {
+	if m.RetrieveFn != nil {
+		return m.RetrieveFn(meta)
+	}
+	// Default implementation returns an empty memory block
+	memoryBlock := agentpod.NewMemoryBlock()
+	return memoryBlock, nil
+}
+
+// Default memory retrieval function that includes basic user data
+func getDefaultMemory(meta *agentpod.Meta) (*agentpod.MemoryBlock, error) {
+	memoryBlock := agentpod.NewMemoryBlock()
+	memoryBlock.AddString("user_id", meta.Extra["user_id"])
+	memoryBlock.AddString("session_id", meta.SessionID)
+	return memoryBlock, nil
+}
+
 type BestAppleFinder struct {
 	toolName    string
 	description string
@@ -142,8 +165,8 @@ func TestSimpleConversation(t *testing.T) {
 		"azure/gpt-4o-mini",
 		"azure/gpt-4o-mini",
 	)
-	mem := &agentpod.Zep{}
-	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says.", []agentpod.Skill{})
+	mem := &MockMemory{}
+	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says exactly as they say it, even the punctuation and cases.", []agentpod.Skill{})
 
 	// Create a mock storage with empty conversation history
 	storage := &MockStorage{
@@ -154,6 +177,7 @@ func TestSimpleConversation(t *testing.T) {
 	orgID := GenerateNewTestID()
 	sessionID := GenerateNewTestID()
 	userID := GenerateNewTestID()
+
 	convSession := agentpod.NewSession(context.Background(), llm, mem, ai, storage, agentpod.Meta{
 		CustomerID: orgID,
 		SessionID:  sessionID,
@@ -197,7 +221,9 @@ func TestConversationWithSkills(t *testing.T) {
 		"azure/gpt-4o-mini",
 		"azure/gpt-4o-mini",
 	)
-	mem := &agentpod.Zep{}
+	mem := &MockMemory{
+		RetrieveFn: getDefaultMemory,
+	}
 	skill := agentpod.Skill{
 		Name:         "AppleExpert",
 		Description:  "You are an expert in apples",
@@ -282,7 +308,9 @@ func TestConversationWithHistory(t *testing.T) {
 		"azure/gpt-4o-mini",
 		"azure/gpt-4o-mini",
 	)
-	mem := &agentpod.Zep{}
+	mem := &MockMemory{
+		RetrieveFn: getDefaultMemory,
+	}
 	ai := agentpod.NewAgent("You are an assistant!", []agentpod.Skill{})
 
 	// Create a mock storage with non-empty conversation history

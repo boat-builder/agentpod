@@ -128,22 +128,16 @@ func (a *Agent) ConvertSkillsToTools() []openai.ChatCompletionToolParam {
 }
 
 // chooseSkills gets the initial response from the LLM that chooses the skills
-func (a *Agent) chooseSkills(ctx context.Context, llm *LLM, clonedMessages *MessageList, userInfo *UserInfo) (*openai.ChatCompletion, error) {
-	memoryBlocks := make(map[string]string)
-	memoryBlocks["UserName"] = userInfo.Name
-	for key, value := range userInfo.Meta {
-		memoryBlocks[key] = value
-	}
-
+func (a *Agent) chooseSkills(ctx context.Context, llm *LLM, clonedMessages *MessageList, memoryBlock *MemoryBlock) (*openai.ChatCompletion, error) {
 	skillFunctions := make([]string, len(a.skills))
 	for i, skill := range a.skills {
 		skillFunctions[i] = skill.Name
 	}
 
 	systemPromptData := prompts.SkillSelectionPromptData{
-		UserSystemPrompt: a.prompt,
-		MemoryBlocks:     memoryBlocks,
-		SkillFunctions:   skillFunctions,
+		MainAgentSystemPrompt: a.prompt,
+		MemoryBlocks:          memoryBlock.Parse(),
+		SkillFunctions:        skillFunctions,
 	}
 	systemPrompt, err := prompts.SkillSelectionPrompt(systemPromptData)
 	if err != nil {
@@ -351,7 +345,7 @@ func (a *Agent) sendThoughtsAboutTools(ctx context.Context, llm *LLM, messageHis
 
 // Run processes a user message through the LLM, executes any requested skills. It returns only after the agent is done.
 // The intermediary messages are sent to the outUserChannel.
-func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, userInfo *UserInfo, outUserChannel chan Response) {
+func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response) {
 	if a.logger == nil {
 		panic("logger is not set")
 	}
@@ -368,7 +362,7 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		}
 	}()
 
-	completion, err := a.chooseSkills(ctx, llm, messageHistory.Clone(), userInfo)
+	completion, err := a.chooseSkills(ctx, llm, messageHistory.Clone(), memoryBlock)
 	if err != nil {
 		a.handleLLMError(err, outUserChannel)
 		return
@@ -405,7 +399,7 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		go func(skill *Skill, toolID string) {
 			defer wg.Done()
 			// Clone the messages again so all goroutines get different message history
-			result, err := a.SkillContextRunner(ctx, messageHistory.Clone(), llm, outUserChannel, *userInfo, skill, tool.ID)
+			result, err := a.SkillContextRunner(ctx, messageHistory.Clone(), llm, outUserChannel, memoryBlock, skill, tool.ID)
 			if err != nil {
 				a.logger.Error("Error running skill", "error", err)
 				return
