@@ -15,14 +15,22 @@ agent := agentpod.NewAgent(AgentMainPrompt, []agentpod.Skill{
 })
 memory := agentpod.NewMem0()
 storage := agentpod.NewPostgresql()
-llm := agentpod.OpenAI(cfg.AI.KeywordsAIAPIKey, cfg.AI.KeywordsAIBaseURL)
+llm := agentpod.NewLLM(
+    cfg.AI.KeywordsAIAPIKey, 
+    cfg.AI.KeywordsAIBaseURL,
+    "o1",  // reasoning model
+    "gpt-4o",  // generation model
+    "o1-mini",  // small reasoning model
+    "gpt-4o-mini"  // small generation model
+)
 
-// create pod
-pod := agentpod.NewPod(agent, memory, storage, llm)
+meta := agentpod.Meta{
+    CustomerID: orgID,
+    SessionID: sessionID,
+    Extra: map[string]string{"user_id": userID},
+}
 
-
-// start the session
-session := pod.NewSession(ctx, userID, sessionID, meta)
+session := agentpod.NewSession(ctx, llm, memory, agent, storage, meta)
 session.In("Hey there")
 msg := session.Out()
 ```
@@ -45,5 +53,11 @@ The Skill and Tool Layer implements a hierarchical approach to functionality org
 
 > Why don't we use "send_message" or something similar to send the messages back to the user?
 
-As all the models becoming reasoning models, internal monologue is becoming a different thing at the model level. With that, all the non-thinking tokens the model generates must sent to the user 
+As all the models becoming reasoning models, internal monologue is becoming a different thing at the model level. With that, all the non-thinking tokens the model generates must sent to the user. 
+
+> Why do we have skills instead of sub agents?
+
+Organizing different capabilities as skills or sub agents is just a matter of semantics. Technically, on the low level, they don't differ.
+
+> Why the agent handoff happen at the root level instead of giving each sub agents (skilled agent execution) the ability to call other agents (skills)
 
