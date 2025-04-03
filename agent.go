@@ -110,8 +110,18 @@ func (a *Agent) returnSingleToolResult(
 	}
 }
 
+func (a *Agent) StopTool() openai.ChatCompletionToolParam {
+	return openai.ChatCompletionToolParam{
+		Function: openai.F(openai.FunctionDefinitionParam{
+			Name:        openai.F("stop"),
+			Description: openai.F("Request a stop after tool execution when you have answer for user request or you have completed the task or you don't know what to do next"),
+			Parameters:  openai.F(openai.FunctionParameters{}),
+		}),
+		Type: openai.F(openai.ChatCompletionToolTypeFunction),
+	}
+}
+
 // TODO - we probably need to have a custom made description for the tool that uses skill.description
-// TODO - Enable Strict mode for the functions
 func (a *Agent) ConvertSkillsToTools() []openai.ChatCompletionToolParam {
 	tools := []openai.ChatCompletionToolParam{}
 	for _, skill := range a.skills {
@@ -127,8 +137,8 @@ func (a *Agent) ConvertSkillsToTools() []openai.ChatCompletionToolParam {
 	return tools
 }
 
-// chooseSkills gets the initial response from the LLM that chooses the skills
-func (a *Agent) chooseSkills(ctx context.Context, llm *LLM, clonedMessages *MessageList, memoryBlock *MemoryBlock) (*openai.ChatCompletion, error) {
+// decideNextAction gets the initial response from the LLM that decides whether to use skills or stop execution
+func (a *Agent) decideNextAction(ctx context.Context, llm *LLM, clonedMessages *MessageList, memoryBlock *MemoryBlock) (*openai.ChatCompletion, error) {
 	skillFunctions := make([]string, len(a.skills))
 	for i, skill := range a.skills {
 		skillFunctions[i] = skill.Name
@@ -148,11 +158,15 @@ func (a *Agent) chooseSkills(ctx context.Context, llm *LLM, clonedMessages *Mess
 	clonedMessages.AddFirst(systemPrompt)
 
 	params := openai.ChatCompletionNewParams{
-		Messages: openai.F(clonedMessages.All()),
-		Model:    openai.F(llm.GenerationModel),
+		Messages:          openai.F(clonedMessages.All()),
+		Model:             openai.F(llm.GenerationModel),
+		ToolChoice:        openai.F(openai.ChatCompletionToolChoiceOptionUnionParam(openai.ChatCompletionToolChoiceOptionAutoRequired)),
+		ParallelToolCalls: openai.F(true),
 	}
+
 	if len(a.ConvertSkillsToTools()) > 0 {
-		params.Tools = openai.F(a.ConvertSkillsToTools())
+		tools := append([]openai.ChatCompletionToolParam{a.StopTool()}, a.ConvertSkillsToTools()...)
+		params.Tools = openai.F(tools)
 	}
 
 	completion, err := llm.New(ctx, params)
@@ -164,12 +178,6 @@ func (a *Agent) chooseSkills(ctx context.Context, llm *LLM, clonedMessages *Mess
 	if len(completion.Choices) == 0 {
 		a.logger.Error("No completion choices")
 		return completion, fmt.Errorf("no completion choices")
-	}
-
-	// Check if both tool call and content are non-empty
-	bothToolCallAndContent := completion.Choices[0].Message.ToolCalls != nil && completion.Choices[0].Message.Content != ""
-	if bothToolCallAndContent {
-		a.logger.Error("Expectation is that tool call and content shouldn't both be non-empty", "message", completion.Choices[0].Message)
 	}
 
 	// Check for duplicate skills in tool calls
@@ -196,24 +204,6 @@ func (a *Agent) chooseSkills(ctx context.Context, llm *LLM, clonedMessages *Mess
 	}
 
 	return completion, nil
-}
-
-// collateSkillCallResults handles the results of tool calls
-func (a *Agent) collateSkillCallResults(
-	completion *openai.ChatCompletion,
-	results map[string]openai.ChatCompletionMessageParamUnion,
-	messageHistory *MessageList,
-	llm *LLM,
-) (string, error) {
-	// If multiple skills were called, summarize the results
-	if len(completion.Choices[0].Message.ToolCalls) > 1 {
-		return a.summarizeMultipleToolResults(results, messageHistory, llm)
-	} else if len(completion.Choices[0].Message.ToolCalls) == 1 {
-		// If only one skill was called, return the result directly
-		return a.returnSingleToolResult(completion, results)
-	}
-
-	return "", fmt.Errorf("no tool calls found in completion")
 }
 
 // handleLLMError handles errors from LLM API calls
@@ -362,68 +352,109 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		}
 	}()
 
-	completion, err := a.chooseSkills(ctx, llm, messageHistory.Clone(), memoryBlock)
-	if err != nil {
-		a.handleLLMError(err, outUserChannel)
-		return
-	}
-	if completion.Choices[0].Message.Content != "" {
-		outUserChannel <- Response{
-			Content: completion.Choices[0].Message.Content,
-			Type:    ResponseTypePartialText,
-		}
-	}
+	var finalResults map[string]openai.ChatCompletionMessageParamUnion
+	var totalToolCalls int
+	var hasStopTool bool
+	var lastCompletion *openai.ChatCompletion
 
-	// If no tool calls were requested, we're done
-	if completion.Choices[0].Message.ToolCalls == nil {
-		return
-	}
-
-	// Offload the skill call to SkillContextRunner
-	results := make(map[string]openai.ChatCompletionMessageParamUnion)
-	toolsToCall := completion.Choices[0].Message.ToolCalls
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	// sending fake thoughts to the user to keep the user engaged
-	go a.sendThoughtsAboutSkills(ctx, llm, messageHistory.Clone(), toolsToCall, outUserChannel)
-
-	for _, tool := range toolsToCall {
-		skill, err := a.GetSkill(tool.Function.Name)
+	for {
+		completion, err := a.decideNextAction(ctx, llm, messageHistory.Clone(), memoryBlock)
 		if err != nil {
-			a.logger.Error("Error getting skill", "error", err)
-			continue
+			a.handleLLMError(err, outUserChannel)
+			return
 		}
 
-		wg.Add(1)
-		go func(skill *Skill, toolID string) {
-			defer wg.Done()
-			// Clone the messages again so all goroutines get different message history
-			result, err := a.SkillContextRunner(ctx, messageHistory.Clone(), llm, outUserChannel, memoryBlock, skill, tool.ID)
+		// If no tool calls were requested, we're done
+		if completion.Choices[0].Message.ToolCalls == nil {
+			return
+		}
+
+		// Separate stop tools from skill tools
+		skillToolCalls := []openai.ChatCompletionMessageToolCall{}
+		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
+			if toolCall.Function.Name == "stop" {
+				hasStopTool = true
+			} else {
+				skillToolCalls = append(skillToolCalls, toolCall)
+			}
+		}
+
+		// Update total tool calls count
+		totalToolCalls += len(skillToolCalls)
+
+		// Execute all skill tools in the current response
+		results := make(map[string]openai.ChatCompletionMessageParamUnion)
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		// sending fake thoughts to the user to keep the user engaged
+		go a.sendThoughtsAboutSkills(ctx, llm, messageHistory.Clone(), skillToolCalls, outUserChannel)
+
+		for _, tool := range skillToolCalls {
+			skill, err := a.GetSkill(tool.Function.Name)
 			if err != nil {
-				a.logger.Error("Error running skill", "error", err)
-				return
+				a.logger.Error("Error getting skill", "error", err)
+				continue
 			}
 
-			mu.Lock()
-			results[toolID] = result
-			mu.Unlock()
-		}(skill, tool.ID)
+			wg.Add(1)
+			go func(skill *Skill, toolID string) {
+				defer wg.Done()
+				// Clone the messages again so all goroutines get different message history
+				result, err := a.SkillContextRunner(ctx, messageHistory.Clone(), llm, outUserChannel, memoryBlock, skill, tool.ID)
+				if err != nil {
+					a.logger.Error("Error running skill", "error", err)
+					return
+				}
+
+				mu.Lock()
+				results[toolID] = result
+				mu.Unlock()
+			}(skill, tool.ID)
+		}
+
+		wg.Wait()
+
+		// Add the completion message to history
+		messageHistory.Add(completion.Choices[0].Message)
+
+		// Add tool results to message history
+		for _, result := range results {
+			messageHistory.Add(result)
+		}
+
+		// Store results for final processing
+		finalResults = results
+		lastCompletion = completion
+
+		// If stop tool was called, break the loop
+		if hasStopTool {
+			break
+		}
 	}
 
-	wg.Wait()
-
-	// creating a new cloned message that doesn't have anything from skill context runner but has the tool calls
-	messageHistory.Add(completion.Choices[0].Message)
-	// Handle results based on number of tool calls
-	collatedResult, err := a.collateSkillCallResults(completion, results, messageHistory, llm)
-	if err != nil {
-		a.handleLLMError(err, outUserChannel)
-		return
-	}
-
-	outUserChannel <- Response{
-		Content: collatedResult,
-		Type:    ResponseTypePartialText,
+	// Handle final results based on total number of tool calls across all iterations
+	if totalToolCalls > 1 {
+		// If multiple skills were called across iterations, summarize the results
+		summary, err := a.summarizeMultipleToolResults(finalResults, messageHistory, llm)
+		if err != nil {
+			a.handleLLMError(err, outUserChannel)
+			return
+		}
+		outUserChannel <- Response{
+			Content: summary,
+			Type:    ResponseTypePartialText,
+		}
+	} else {
+		// If only one skill was called in total, return the result directly
+		result, err := a.returnSingleToolResult(lastCompletion, finalResults)
+		if err != nil {
+			a.handleLLMError(err, outUserChannel)
+			return
+		}
+		outUserChannel <- Response{
+			Content: result,
+			Type:    ResponseTypePartialText,
+		}
 	}
 }

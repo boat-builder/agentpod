@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/boat-builder/agentpod/prompts"
 	"github.com/openai/openai-go"
@@ -74,9 +75,10 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		}
 
 		params := openai.ChatCompletionNewParams{
-			Messages:        openai.F(messageHistory.All()),
-			Model:           openai.F(modelToUse),
-			ReasoningEffort: openai.F(openai.ChatCompletionReasoningEffortHigh),
+			Messages:          openai.F(messageHistory.All()),
+			Model:             openai.F(modelToUse),
+			ReasoningEffort:   openai.F(openai.ChatCompletionReasoningEffortHigh),
+			ParallelToolCalls: openai.F(true),
 		}
 		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
 		if len(skill.GetTools()) > 0 {
@@ -109,53 +111,86 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		toolsToCall := completion.Choices[0].Message.ToolCalls
 		go a.sendThoughtsAboutTools(ctx, llm, messageHistoryBeforeLLMCall, toolsToCall, outChan)
 
-		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
-			tool, err := skill.GetTool(toolCall.Function.Name)
-			if err != nil {
-				a.logger.Error("Error getting tool", "error", err)
-				messageHistory.Add(MessageWhenToolError(toolCall.ID))
-				continue
-			}
-			if tool.StatusMessage() != "" {
-				outChan <- Response{
-					Content: tool.StatusMessage(),
-					Type:    ResponseTypeStatus,
-				}
-			}
-			a.logger.Info("Tool", "tool", tool.Name(), "arguments", toolCall.Function.Arguments)
-			arguments := map[string]interface{}{}
-			err = json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments)
-			if err != nil {
-				a.logger.Error("Error unmarshalling tool arguments", "error", err)
-				messageHistory.Add(MessageWhenToolErrorWithRetry(err.Error(), skillToolCallID))
-				continue
-			}
-			// TODO - model doesn't always generate valid JSON, so we need to validate the arguments and ask LLM to fix if there are errors
-			output, err := tool.Execute(arguments)
-			if err != nil {
-				a.logger.Error("Error executing tool", "error", err)
+		// Create a wait group to wait for all tool executions to complete
+		var wg sync.WaitGroup
+		// Create a channel to collect results from goroutines
+		resultChan := make(chan struct {
+			toolCall openai.ChatCompletionMessageToolCall
+			output   string
+			err      error
+		}, len(toolsToCall))
 
+		for _, toolCall := range toolsToCall {
+			wg.Add(1)
+			go func(toolCall openai.ChatCompletionMessageToolCall) {
+				defer wg.Done()
+
+				tool, err := skill.GetTool(toolCall.Function.Name)
+				if err != nil {
+					a.logger.Error("Error getting tool", "error", err)
+					resultChan <- struct {
+						toolCall openai.ChatCompletionMessageToolCall
+						output   string
+						err      error
+					}{toolCall, "", err}
+					return
+				}
+
+				if tool.StatusMessage() != "" {
+					outChan <- Response{
+						Content: tool.StatusMessage(),
+						Type:    ResponseTypeStatus,
+					}
+				}
+
+				a.logger.Info("Tool", "tool", tool.Name(), "arguments", toolCall.Function.Arguments)
+				arguments := map[string]interface{}{}
+				err = json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments)
+				if err != nil {
+					a.logger.Error("Error unmarshalling tool arguments", "error", err)
+					resultChan <- struct {
+						toolCall openai.ChatCompletionMessageToolCall
+						output   string
+						err      error
+					}{toolCall, "", err}
+					return
+				}
+
+				output, err := tool.Execute(arguments)
+				resultChan <- struct {
+					toolCall openai.ChatCompletionMessageToolCall
+					output   string
+					err      error
+				}{toolCall, output, err}
+			}(toolCall)
+		}
+
+		// Start a goroutine to close the result channel when all tools are done
+		go func() {
+			wg.Wait()
+			close(resultChan)
+		}()
+
+		// Process results as they come in
+		for result := range resultChan {
+			if result.err != nil {
+				a.logger.Error("Error executing tool", "error", result.err)
 				switch {
-				case errors.As(err, &ignErr):
-					// It's an IgnorableError
-					messageHistory.Add(MessageWhenToolError(toolCall.ID))
-					continue
-				case errors.As(err, &retErr):
-					// It's a RetryableError
-					messageHistory.Add(MessageWhenToolErrorWithRetry(err.Error(), toolCall.ID))
-
+				case errors.As(result.err, &ignErr):
+					messageHistory.Add(MessageWhenToolError(result.toolCall.ID))
+				case errors.As(result.err, &retErr):
+					messageHistory.Add(MessageWhenToolErrorWithRetry(result.err.Error(), skillToolCallID))
 				default:
-					// Some other error
-					messageHistory.Add(MessageWhenToolError(toolCall.ID))
-					continue
+					messageHistory.Add(MessageWhenToolError(result.toolCall.ID))
 				}
-			} else {
-				messageHistory.Add(openai.ChatCompletionToolMessageParam{
-					Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-					Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(output)}}),
-					ToolCallID: openai.F(toolCall.ID),
-				})
+				continue
 			}
+
+			messageHistory.Add(openai.ChatCompletionToolMessageParam{
+				Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
+				Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(result.output)}}),
+				ToolCallID: openai.F(result.toolCall.ID),
+			})
 		}
 	}
 	allMessages := messageHistory.All()
