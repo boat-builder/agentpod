@@ -333,6 +333,47 @@ func (a *Agent) sendThoughtsAboutTools(ctx context.Context, llm *LLM, messageHis
 
 }
 
+// runWithoutSkills handles the case when no skills are available by directly calling the LLM
+func (a *Agent) runWithoutSkills(ctx context.Context, llm *LLM, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response) {
+	// Create a system prompt using the NoSkillsPrompt function
+	systemPromptData := prompts.NoSkillsPromptData{
+		MainAgentSystemPrompt: a.prompt,
+		MemoryBlocks:          memoryBlock.Parse(),
+	}
+	systemPrompt, err := prompts.NoSkillsPrompt(systemPromptData)
+	if err != nil {
+		a.logger.Error("Error getting system prompt", "error", err)
+		a.handleLLMError(err, outUserChannel)
+		return
+	}
+
+	// Clone the message history and add the system prompt
+	clonedMessages := messageHistory.Clone()
+	clonedMessages.AddFirst(systemPrompt)
+
+	params := openai.ChatCompletionNewParams{
+		Messages: openai.F(clonedMessages.All()),
+		Model:    openai.F(llm.GenerationModel),
+	}
+
+	completion, err := llm.New(ctx, params)
+	if err != nil {
+		a.handleLLMError(err, outUserChannel)
+		return
+	}
+
+	if len(completion.Choices) == 0 {
+		a.logger.Error("No completion choices")
+		a.handleLLMError(fmt.Errorf("no completion choices"), outUserChannel)
+		return
+	}
+
+	outUserChannel <- Response{
+		Content: completion.Choices[0].Message.Content,
+		Type:    ResponseTypePartialText,
+	}
+}
+
 // Run processes a user message through the LLM, executes any requested skills. It returns only after the agent is done.
 // The intermediary messages are sent to the outUserChannel.
 func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response) {
@@ -357,6 +398,12 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 	var hasStopTool bool
 	var lastCompletion *openai.ChatCompletion
 
+	if len(a.skills) == 0 {
+		// If no skills are available, use the runWithoutSkills function
+		a.runWithoutSkills(ctx, llm, messageHistory, memoryBlock, outUserChannel)
+		return
+	}
+
 	for {
 		completion, err := a.decideNextAction(ctx, llm, messageHistory.Clone(), memoryBlock)
 		if err != nil {
@@ -366,7 +413,7 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 
 		// If no tool calls were requested, we're done
 		if completion.Choices[0].Message.ToolCalls == nil {
-			return
+			break
 		}
 
 		// Separate stop tools from skill tools

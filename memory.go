@@ -120,15 +120,18 @@ func (mb *MemoryBlock) parseWithIndent(level int, tagName string) string {
 	// Open tag
 	result.WriteString(fmt.Sprintf("%s<%s>\n", indent, tagName))
 
-	// Process all items in the map
+	// First process all string values
 	for k, v := range mb.Items {
-		if v.IsBlock() {
-			// Nested memory block gets its own tag
-			result.WriteString(v.AsBlock().parseWithIndent(level+1, k))
-		} else {
-			// String value
+		if v.IsString() {
 			innerIndent := strings.Repeat("  ", level+1)
 			result.WriteString(fmt.Sprintf("%s%s: %v\n", innerIndent, k, v.AsString()))
+		}
+	}
+
+	// Then process all nested blocks
+	for k, v := range mb.Items {
+		if v.IsBlock() {
+			result.WriteString(v.AsBlock().parseWithIndent(level+1, k))
 		}
 	}
 
