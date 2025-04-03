@@ -510,16 +510,11 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 	} else if len(finalSkillCallResults) == 1 {
 		// If callSummarizer is false, return the final skill result directly
 		// Get the last skill result
-		fmt.Printf("DEBUG: Processing single skill result. finalSkillCallResults length: %d\n", len(finalSkillCallResults))
-
 		// Get keys from the map
-		keys := make([]string, 0, len(finalSkillCallResults))
-		for k := range finalSkillCallResults {
-			keys = append(keys, k)
+		var lastResult openai.ChatCompletionToolMessageParam
+		for _, result := range finalSkillCallResults {
+			lastResult = result
 		}
-		fmt.Printf("DEBUG: finalSkillCallResults keys: %v\n", keys)
-
-		lastResult := finalSkillCallResults[keys[0]]
 
 		// Extract the text content using the existing GetMessageText function
 		contentString, err := GetMessageText(lastResult)
