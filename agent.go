@@ -390,7 +390,7 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		}
 	}()
 
-	var finalSkillCallResults map[string]openai.ChatCompletionMessageParamUnion
+	var finalSkillCallResults map[string]openai.ChatCompletionToolMessageParam
 	var hasStopTool bool
 	var callSummarizer bool
 
@@ -432,7 +432,7 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		}
 
 		// Execute all skill tools in the current response
-		skillCallResults := make(map[string]openai.ChatCompletionMessageParamUnion)
+		skillCallResults := make(map[string]openai.ChatCompletionToolMessageParam)
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 
@@ -519,41 +519,27 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		}
 		fmt.Printf("DEBUG: finalSkillCallResults keys: %v\n", keys)
 
-		var lastResult openai.ChatCompletionMessageParamUnion
-		for key, result := range finalSkillCallResults {
-			fmt.Printf("DEBUG: Processing result with key: %s\n", key)
-			lastResult = result
-		}
+		lastResult := finalSkillCallResults[keys[0]]
 
-		// Extract the content from the result
-		fmt.Printf("DEBUG: lastResult type: %T\n", lastResult)
-		if content, ok := lastResult.(openai.ChatCompletionMessageParam); ok {
-			// Convert the content to string - using a simpler approach
-			fmt.Printf("DEBUG: Content type: %T\n", content.Content)
-			contentStr := fmt.Sprintf("%v", content.Content)
-			fmt.Printf("DEBUG: Extracted content string: %s\n", contentStr)
-
+		// Extract the text content using the existing GetMessageText function
+		contentString, err := GetMessageText(lastResult)
+		if err != nil {
+			a.logger.Error("Error extracting content from tool result", "error", err)
 			outUserChannel <- Response{
-				Content: contentStr,
-				Type:    ResponseTypePartialText,
-			}
-		} else {
-			a.logger.Error("Failed to extract content from skill result")
-			fmt.Printf("DEBUG: Type assertion failed. lastResult type: %T\n", lastResult)
-			outUserChannel <- Response{
-				Content: "I encountered an error while processing the results.",
+				Content: "Error processing the result.",
 				Type:    ResponseTypeError,
 			}
+			return
+		}
+
+		outUserChannel <- Response{
+			Content: contentString,
+			Type:    ResponseTypePartialText,
 		}
 		return
 	} else {
-		// If there are no skill results, we don't have anything to return
+		// If there are no skill results, we return an error
 		a.logger.Warn("No skill results available to return")
-		fmt.Printf("DEBUG: No skill results available. finalSkillCallResults length: %d\n", len(finalSkillCallResults))
-		fmt.Printf("DEBUG: finalSkillCallResults content: %+v\n", finalSkillCallResults)
-		fmt.Printf("DEBUG: hasStopTool: %v, callSummarizer: %v\n", hasStopTool, callSummarizer)
-		fmt.Printf("DEBUG: Message history length: %d\n", len(messageHistory.All()))
-
 		outUserChannel <- Response{
 			Content: "I encountered an error while processing the results.",
 			Type:    ResponseTypeError,

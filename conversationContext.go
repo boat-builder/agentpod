@@ -114,12 +114,24 @@ func GetMessageText(message openai.ChatCompletionMessageParamUnion) (string, err
 		}
 		return builder.String(), nil
 
+	case openai.ChatCompletionToolMessageParam:
+		// Tool message - extract text from content parts
+		if len(m.Content.Value) == 0 {
+			return "", fmt.Errorf("tool message content is empty")
+		}
+
+		var builder strings.Builder
+		for _, part := range m.Content.Value {
+			builder.WriteString(part.Text.Value)
+		}
+		return builder.String(), nil
+
 	case openai.ChatCompletionMessage:
 		// Direct Message type - may have direct content
 		return m.Content, nil
 
 	default:
-		return "", fmt.Errorf("unsupported message type")
+		return "", fmt.Errorf("unsupported message type: %T", message)
 	}
 }
 

@@ -50,7 +50,7 @@ func (a *Agent) GenerateSummary(ctx context.Context, messages *MessageList, llmC
 	return completion.Choices[0].Message.Content, nil
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string) (openai.ChatCompletionToolMessageParam, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 
 	promptData := prompts.SkillContextRunnerPromptData{
@@ -61,7 +61,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 	systemPrompt, err := prompts.SkillContextRunnerPrompt(promptData)
 	if err != nil {
 		a.logger.Error("Error getting system prompt", "error", err)
-		return nil, err
+		return openai.ChatCompletionToolMessageParam{}, err
 	}
 	messageHistory.AddFirst(systemPrompt)
 
