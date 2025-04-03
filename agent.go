@@ -3,6 +3,7 @@ package agentpod
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -59,12 +60,8 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 }
 
 // summarizeMultipleToolResults summarizes results when multiple tools were called
-func (a *Agent) summarizeMultipleToolResults(results map[string]openai.ChatCompletionMessageParamUnion, clonedMessages *MessageList, llm *LLM) (string, error) {
-	// Prepare the results for the OpenAI API call
-	for _, result := range results {
-		clonedMessages.Add(result)
-	}
-
+func (a *Agent) summarizeMultipleToolResults(ctx context.Context, clonedMessages *MessageList, llm *LLM) (string, error) {
+	clonedMessages.AddFirst("Craft a helpful answer to user's question based on the tool call results. Be concise and to the point.")
 	params := openai.ChatCompletionNewParams{
 		Messages: openai.F(clonedMessages.All()),
 		Model:    openai.F(llm.GenerationModel),
@@ -73,7 +70,7 @@ func (a *Agent) summarizeMultipleToolResults(results map[string]openai.ChatCompl
 		}),
 	}
 
-	stream := llm.NewStreaming(context.Background(), params)
+	stream := llm.NewStreaming(ctx, params)
 	defer stream.Close()
 
 	var fullResponse strings.Builder
@@ -93,29 +90,24 @@ func (a *Agent) summarizeMultipleToolResults(results map[string]openai.ChatCompl
 	return fullResponse.String(), nil
 }
 
-// returnSingleToolResult returns the result when only one tool was called
-func (a *Agent) returnSingleToolResult(
-	completion *openai.ChatCompletion,
-	results map[string]openai.ChatCompletionMessageParamUnion,
-) (string, error) {
-	// If only one skill is called, return the result directly
-	toolCallID := completion.Choices[0].Message.ToolCalls[0].ID
-	resp := results[toolCallID]
-
-	if message, ok := resp.(openai.ChatCompletionToolMessageParam); ok {
-		return message.Content.Value[0].Text.Value, nil
-	} else {
-		a.logger.Error("Unexpected message type")
-		return "", fmt.Errorf("unexpected message type")
-	}
-}
-
 func (a *Agent) StopTool() openai.ChatCompletionToolParam {
 	return openai.ChatCompletionToolParam{
 		Function: openai.F(openai.FunctionDefinitionParam{
-			Name:        openai.F("stop"),
-			Description: openai.F("Request a stop after tool execution when you have answer for user request or you have completed the task or you don't know what to do next"),
-			Parameters:  openai.F(openai.FunctionParameters{}),
+			Name: openai.F("stop"),
+			Description: openai.F(`Request a stop after tool execution when one of the belwo is true
+1. You have answer for user request
+2. You have completed the task
+3. You don't know what to do next with the given tools or information`),
+			Parameters: openai.F(openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"callSummarizer": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Sometimes, the final answer to user's question won't be in the last skill call result. This is unlikely but possible. If that's the case, set this to True. If the last skill call result answers the user's question, set this to False.",
+					},
+				},
+				"required": []string{"callSummarizer"},
+			}),
 		}),
 		Type: openai.F(openai.ChatCompletionToolTypeFunction),
 	}
@@ -381,26 +373,30 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		panic("logger is not set")
 	}
 
-	// making sure we send the end response when the agent is done
+	// Create a cancel function from the context
+	ctx, cancel := context.WithCancel(ctx)
+
+	// making sure we send the end response when the agent is done and cancel the context
 	defer func() {
 		defer func() {
 			if r := recover(); r != nil {
 				a.logger.Error("Panic when sending end response", "error", r)
 			}
 		}()
+		// Cancel the context to stop any in-flight requests
+		cancel()
 		outUserChannel <- Response{
 			Type: ResponseTypeEnd,
 		}
 	}()
 
-	var finalResults map[string]openai.ChatCompletionMessageParamUnion
-	var totalToolCalls int
+	var finalSkillCallResults map[string]openai.ChatCompletionMessageParamUnion
 	var hasStopTool bool
-	var lastCompletion *openai.ChatCompletion
+	var callSummarizer bool
 
 	if len(a.skills) == 0 {
 		// If no skills are available, use the runWithoutSkills function
-		a.runWithoutSkills(ctx, llm, messageHistory, memoryBlock, outUserChannel)
+		a.runWithoutSkills(ctx, llm, messageHistory.Clone(), memoryBlock, outUserChannel)
 		return
 	}
 
@@ -421,16 +417,22 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
 			if toolCall.Function.Name == "stop" {
 				hasStopTool = true
+				// Parse the callSummarizer parameter from the stop tool
+				var args map[string]interface{}
+				if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+					a.logger.Error("Error parsing stop tool arguments", "error", err)
+				} else {
+					if val, ok := args["callSummarizer"].(bool); ok {
+						callSummarizer = val
+					}
+				}
 			} else {
 				skillToolCalls = append(skillToolCalls, toolCall)
 			}
 		}
 
-		// Update total tool calls count
-		totalToolCalls += len(skillToolCalls)
-
 		// Execute all skill tools in the current response
-		results := make(map[string]openai.ChatCompletionMessageParamUnion)
+		skillCallResults := make(map[string]openai.ChatCompletionMessageParamUnion)
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 
@@ -455,26 +457,35 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 				}
 
 				mu.Lock()
-				results[toolID] = result
+				skillCallResults[toolID] = result
 				mu.Unlock()
 			}(skill, tool.ID)
 		}
 
 		wg.Wait()
 
-		// Add the completion message to history
-		messageHistory.Add(completion.Choices[0].Message)
+		// Add the completion message to history, but filter out the stop tool call
+		messageToAdd := completion.Choices[0].Message
+		if messageToAdd.ToolCalls != nil {
+			filteredToolCalls := []openai.ChatCompletionMessageToolCall{}
+			for _, toolCall := range messageToAdd.ToolCalls {
+				if toolCall.Function.Name != "stop" {
+					filteredToolCalls = append(filteredToolCalls, toolCall)
+				}
+			}
+			messageToAdd.ToolCalls = filteredToolCalls
+		}
+		messageHistory.Add(messageToAdd)
 
 		// Add tool results to message history
-		for _, result := range results {
+		for _, result := range skillCallResults {
 			messageHistory.Add(result)
 		}
 
 		// Store results for final processing
 		if len(skillToolCalls) > 0 {
 			// Only update finalResults and lastCompletion if there were skill tool calls in this iteration
-			finalResults = results
-			lastCompletion = completion
+			finalSkillCallResults = skillCallResults
 		}
 
 		// If stop tool was called, break the loop
@@ -483,10 +494,10 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		}
 	}
 
-	// Handle final results based on total number of tool calls across all iterations
-	if totalToolCalls > 1 {
-		// If multiple skills were called across iterations, summarize the results
-		summary, err := a.summarizeMultipleToolResults(finalResults, messageHistory, llm)
+	// Handle final results based on the callSummarizer parameter from the stop tool or if multiple skills were called
+	if callSummarizer || len(finalSkillCallResults) > 1 {
+		// If callSummarizer is true, summarize the results
+		summary, err := a.summarizeMultipleToolResults(ctx, messageHistory.Clone(), llm)
 		if err != nil {
 			a.handleLLMError(err, outUserChannel)
 			return
@@ -495,16 +506,57 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 			Content: summary,
 			Type:    ResponseTypePartialText,
 		}
-	} else {
-		// If only one skill was called in total, return the result directly
-		result, err := a.returnSingleToolResult(lastCompletion, finalResults)
-		if err != nil {
-			a.handleLLMError(err, outUserChannel)
-			return
+		return
+	} else if len(finalSkillCallResults) == 1 {
+		// If callSummarizer is false, return the final skill result directly
+		// Get the last skill result
+		fmt.Printf("DEBUG: Processing single skill result. finalSkillCallResults length: %d\n", len(finalSkillCallResults))
+
+		// Get keys from the map
+		keys := make([]string, 0, len(finalSkillCallResults))
+		for k := range finalSkillCallResults {
+			keys = append(keys, k)
 		}
+		fmt.Printf("DEBUG: finalSkillCallResults keys: %v\n", keys)
+
+		var lastResult openai.ChatCompletionMessageParamUnion
+		for key, result := range finalSkillCallResults {
+			fmt.Printf("DEBUG: Processing result with key: %s\n", key)
+			lastResult = result
+		}
+
+		// Extract the content from the result
+		fmt.Printf("DEBUG: lastResult type: %T\n", lastResult)
+		if content, ok := lastResult.(openai.ChatCompletionMessageParam); ok {
+			// Convert the content to string - using a simpler approach
+			fmt.Printf("DEBUG: Content type: %T\n", content.Content)
+			contentStr := fmt.Sprintf("%v", content.Content)
+			fmt.Printf("DEBUG: Extracted content string: %s\n", contentStr)
+
+			outUserChannel <- Response{
+				Content: contentStr,
+				Type:    ResponseTypePartialText,
+			}
+		} else {
+			a.logger.Error("Failed to extract content from skill result")
+			fmt.Printf("DEBUG: Type assertion failed. lastResult type: %T\n", lastResult)
+			outUserChannel <- Response{
+				Content: "I encountered an error while processing the results.",
+				Type:    ResponseTypeError,
+			}
+		}
+		return
+	} else {
+		// If there are no skill results, we don't have anything to return
+		a.logger.Warn("No skill results available to return")
+		fmt.Printf("DEBUG: No skill results available. finalSkillCallResults length: %d\n", len(finalSkillCallResults))
+		fmt.Printf("DEBUG: finalSkillCallResults content: %+v\n", finalSkillCallResults)
+		fmt.Printf("DEBUG: hasStopTool: %v, callSummarizer: %v\n", hasStopTool, callSummarizer)
+		fmt.Printf("DEBUG: Message history length: %d\n", len(messageHistory.All()))
+
 		outUserChannel <- Response{
-			Content: result,
-			Type:    ResponseTypePartialText,
+			Content: "I encountered an error while processing the results.",
+			Type:    ResponseTypeError,
 		}
 	}
 }

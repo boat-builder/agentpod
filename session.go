@@ -86,6 +86,7 @@ func (s *Session) Close() {
 // TODO - handle refusal everywhere
 // TODO - handle other errors like network errors everywhere
 func (s *Session) run() {
+	s.logger.Info("Session started", "sessionID", s.meta.SessionID)
 	defer s.Close()
 	select {
 	case <-s.ctx.Done():

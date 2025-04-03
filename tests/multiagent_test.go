@@ -162,7 +162,7 @@ func getUserPreferencesMemory(meta *agentpod.Meta) (*agentpod.MemoryBlock, error
 	memoryBlock := agentpod.NewMemoryBlock()
 	userDetailsBlock := agentpod.NewMemoryBlock()
 	userDetailsBlock.AddString("location", "Downtown")
-	userDetailsBlock.AddString("favorite_cuisines", "Italian,Japanese,Mexican")
+	userDetailsBlock.AddString("favorite_cuisines", "Italian")
 	memoryBlock.AddBlock("UserDetails", userDetailsBlock)
 	return memoryBlock, nil
 }
@@ -189,26 +189,23 @@ func TestMultiAgentRestaurantRecommendation(t *testing.T) {
 
 	// Create restaurant agent with restaurant recommendation tool
 	restaurantTool := NewRestaurantTool()
+	cuisineTool := NewCuisineTool()
 	restaurantAgent := agentpod.NewAgent(
 		"You are a restaurant recommendation expert. You help users find the perfect restaurant based on their location and cuisine preferences. Be concise and direct in your recommendations.",
-		[]agentpod.Skill{{
-			Name:         "RestaurantExpert",
-			Description:  "Expert in restaurant recommendations",
-			SystemPrompt: "As a restaurant expert, you provide personalized restaurant recommendations based on location and cuisine preferences.",
-			Tools:        []agentpod.Tool{restaurantTool},
-		}},
-	)
-
-	// Create cuisine agent with cuisine recommendation tool
-	cuisineTool := NewCuisineTool()
-	cuisineAgent := agentpod.NewAgent(
-		"You are a cuisine expert. You help users discover delicious dishes at recommended restaurants. Be concise and direct in your recommendations.",
-		[]agentpod.Skill{{
-			Name:         "CuisineExpert",
-			Description:  "Expert in cuisine and dishes",
-			SystemPrompt: "As a cuisine expert, you provide dish recommendations for specific restaurants.",
-			Tools:        []agentpod.Tool{cuisineTool},
-		}},
+		[]agentpod.Skill{
+			{
+				Name:         "RestaurantExpert",
+				Description:  "Expert in restaurant recommendations",
+				SystemPrompt: "As a restaurant expert, you provide personalized restaurant recommendations. Do not make any recommendations on dishes. We have cusines expert for that.",
+				Tools:        []agentpod.Tool{restaurantTool},
+			},
+			{
+				Name:         "CuisineExpert",
+				Description:  "Expert in cuisine and dishes, you provide dish recommendations for restaurants found by RestaurantExpert",
+				SystemPrompt: "As a cuisine expert, you provide dish recommendations for restaurants found by RestaurantExpert. You should only do recommendations on cusines for the restaurants you have access to. You should not assume the existance of any restaurants that you don't have access to",
+				Tools:        []agentpod.Tool{cuisineTool},
+			},
+		},
 	)
 
 	// Create a mock storage with empty conversation history
@@ -226,58 +223,40 @@ func TestMultiAgentRestaurantRecommendation(t *testing.T) {
 		Extra:      map[string]string{"user_id": userID},
 	})
 
-	// Create session with cuisine agent
-	cuisineSession := agentpod.NewSession(context.Background(), llm, mem, cuisineAgent, storage, agentpod.Meta{
-		CustomerID: orgID,
-		SessionID:  sessionID,
-		Extra:      map[string]string{"user_id": userID},
-	})
-
 	// Test restaurant recommendation
-	restaurantSession.In("What's a good restaurant for me?")
-	var restaurantResponse string
+	restaurantSession.In("What's a good restaurant for me? and what dishes do they have.")
+	var response string
 	for {
 		out := restaurantSession.Out()
-		restaurantResponse += out.Content
+		response += out.Content
 		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
 	}
 
 	// Verify restaurant recommendation
-	if !strings.Contains(strings.ToLower(restaurantResponse), "pasta paradise") {
-		t.Fatal("Expected 'Pasta Paradise' to be in the restaurant recommendation, got:", restaurantResponse)
-	}
-
-	// Test cuisine recommendation
-	cuisineSession.In("What dishes do they have?")
-	var cuisineResponse string
-	for {
-		out := cuisineSession.Out()
-		cuisineResponse += out.Content
-		if out.Type == agentpod.ResponseTypeEnd {
-			break
-		}
+	if !strings.Contains(strings.ToLower(response), "pasta paradise") {
+		t.Fatal("Expected 'Pasta Paradise' to be in the restaurant recommendation, got:", response)
 	}
 
 	// Verify cuisine recommendation
 	expectedDishes := []string{"carbonara", "lasagna", "risotto"}
 	foundDish := false
 	for _, dish := range expectedDishes {
-		if strings.Contains(strings.ToLower(cuisineResponse), dish) {
+		if strings.Contains(strings.ToLower(response), dish) {
 			foundDish = true
 			break
 		}
 	}
 	if !foundDish {
-		t.Fatal("Expected at least one of the dishes to be in the cuisine recommendation, got:", cuisineResponse)
+		t.Fatal("Expected at least one of the dishes to be in the cuisine recommendation, got:", response)
 	}
 
 	// Verify CreateConversation was called with the correct messages
 	if !storage.WasCreateConversationCalled() {
 		t.Fatal("Expected CreateConversation to be called")
 	}
-	if storage.GetUserMessage(sessionID) != "What dishes do they have?" {
+	if storage.GetUserMessage(sessionID) != "What's a good restaurant for me? and what dishes do they have." {
 		t.Fatalf("Expected user message to match, got: %s", storage.GetUserMessage(sessionID))
 	}
 }

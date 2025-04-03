@@ -15,7 +15,7 @@ type SkillSelectionPromptData struct {
 const SkillSelectionPromptTemplate = `
 {{ .MainAgentSystemPrompt }}
 
-You can use skill functions {{ formatSkillFunctions .SkillFunctions }} to help you answer user's question. Skill functions are capable of handling multiple queries. Do not call the same skill more than once. When calling skill function, pass the clear instructions for the skill function to follow to get the goal. Skill functions is capable of understanding human language and take complicated actions based on the instructions.
+You can use skill functions {{ formatSkillFunctions .SkillFunctions }} to help you answer user's question. Skill functions are capable of handling multiple queries. Do not call the same skill more than once. Skill functions get the whole context externally. You don't need to pass any arguments to the skill functions. Skill functions is capable of understanding human language and take complicated actions based on the instructions. When multiple skills are needed to answer the user's question, call parallel skills only if they are independant of each other. Almost always there are interdependencies between skills, so don't call a skill if it depends on the result of another skill.
 
 <UserPreferences>
 - Don't be too chatty
