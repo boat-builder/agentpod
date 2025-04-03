@@ -471,8 +471,11 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 		}
 
 		// Store results for final processing
-		finalResults = results
-		lastCompletion = completion
+		if len(skillToolCalls) > 0 {
+			// Only update finalResults and lastCompletion if there were skill tool calls in this iteration
+			finalResults = results
+			lastCompletion = completion
+		}
 
 		// If stop tool was called, break the loop
 		if hasStopTool {
