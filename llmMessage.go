@@ -7,7 +7,7 @@ import (
 	"github.com/openai/openai-go"
 )
 
-// We have custom UserMessage/AssistantMessage/DeveloperMessage because openai go sdk currently have openai.DeveloperMessage()
+// TODO Remove all three and use openai functions directly
 func UserMessage(content string) openai.ChatCompletionMessageParamUnion {
 	return openai.UserMessage(content)
 }
@@ -17,12 +17,7 @@ func AssistantMessage(content string) openai.ChatCompletionMessageParamUnion {
 }
 
 func DeveloperMessage(content string) openai.ChatCompletionMessageParamUnion {
-	return openai.ChatCompletionDeveloperMessageParam{
-		Role: openai.F(openai.ChatCompletionDeveloperMessageParamRoleDeveloper),
-		Content: openai.F([]openai.ChatCompletionContentPartTextParam{
-			openai.TextPart(content),
-		}),
-	}
+	return openai.DeveloperMessage(content)
 }
 
 // MessageList holds an ordered collection of LLMMessage to preserve the history.
@@ -65,20 +60,6 @@ func (ml *MessageList) Clone() *MessageList {
 	return &MessageList{
 		Messages: append([]openai.ChatCompletionMessageParamUnion{}, ml.Messages...),
 	}
-}
-
-func (ml *MessageList) LastUserMessageString() string {
-	for i := len(ml.Messages) - 1; i >= 0; i-- {
-		if userMessage, ok := ml.Messages[i].(openai.ChatCompletionUserMessageParam); ok {
-			parts := userMessage.Content.Value
-			for _, part := range parts {
-				if textPart, ok := part.(openai.ChatCompletionContentPartTextParam); ok {
-					return textPart.Text.Value
-				}
-			}
-		}
-	}
-	return ""
 }
 
 func (ml *MessageList) Clear() {

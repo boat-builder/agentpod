@@ -42,14 +42,14 @@ func (s *Skill) Spec() string {
 
 	for _, toolParam := range s.GetTools() {
 		// Extract tool information from the function definition
-		toolName := toolParam.Function.Value.Name.Value
-		toolDescription := toolParam.Function.Value.Description.Value
+		toolName := toolParam.Function.Name
+		toolDescription := toolParam.Function.Description.Value
 
 		toolsDescription.WriteString(fmt.Sprintf("Tool: %s\n", toolName))
 		toolsDescription.WriteString(fmt.Sprintf("Description: %s\n", toolDescription))
 
 		// Get parameters information if available
-		params := toolParam.Function.Value.Parameters.Value
+		params := toolParam.Function.Parameters
 
 		// Extract properties and required fields from parameters
 		if properties, ok := params["properties"].(map[string]interface{}); ok {

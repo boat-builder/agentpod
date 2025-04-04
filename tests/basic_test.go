@@ -7,6 +7,7 @@ import (
 
 	"github.com/boat-builder/agentpod"
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/packages/param"
 )
 
 // MockMemory implements the Memory interface for testing
@@ -52,11 +53,10 @@ func (b *BestAppleFinder) StatusMessage() string {
 func (b *BestAppleFinder) OpenAI() []openai.ChatCompletionToolParam {
 	return []openai.ChatCompletionToolParam{
 		{
-			Type: openai.F(openai.ChatCompletionToolTypeFunction),
-			Function: openai.F(openai.FunctionDefinitionParam{
-				Name:        openai.F(b.toolName),
-				Description: openai.F(b.description),
-				Parameters: openai.F(openai.FunctionParameters{
+			Function: openai.FunctionDefinitionParam{
+				Name:        b.toolName,
+				Description: param.Opt[string]{Value: b.description},
+				Parameters: openai.FunctionParameters{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"user_query": map[string]interface{}{
@@ -65,8 +65,8 @@ func (b *BestAppleFinder) OpenAI() []openai.ChatCompletionToolParam {
 						},
 					},
 					"required": []string{"user_query"},
-				}),
-			}),
+				},
+			},
 		},
 	}
 }

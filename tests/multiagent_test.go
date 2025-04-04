@@ -7,6 +7,7 @@ import (
 
 	"github.com/boat-builder/agentpod"
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/packages/param"
 )
 
 // RestaurantTool implements the Tool interface for restaurant recommendations
@@ -61,11 +62,10 @@ func (r *RestaurantTool) StatusMessage() string {
 func (r *RestaurantTool) OpenAI() []openai.ChatCompletionToolParam {
 	return []openai.ChatCompletionToolParam{
 		{
-			Type: openai.F(openai.ChatCompletionToolTypeFunction),
-			Function: openai.F(openai.FunctionDefinitionParam{
-				Name:        openai.F(r.toolName),
-				Description: openai.F(r.description),
-				Parameters: openai.F(openai.FunctionParameters{
+			Function: openai.FunctionDefinitionParam{
+				Name:        r.toolName,
+				Description: param.Opt[string]{Value: r.description},
+				Parameters: openai.FunctionParameters{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"location": map[string]interface{}{
@@ -78,8 +78,8 @@ func (r *RestaurantTool) OpenAI() []openai.ChatCompletionToolParam {
 						},
 					},
 					"required": []string{"location", "cuisine"},
-				}),
-			}),
+				},
+			},
 		},
 	}
 }
@@ -130,11 +130,10 @@ func (c *CuisineTool) StatusMessage() string {
 func (c *CuisineTool) OpenAI() []openai.ChatCompletionToolParam {
 	return []openai.ChatCompletionToolParam{
 		{
-			Type: openai.F(openai.ChatCompletionToolTypeFunction),
-			Function: openai.F(openai.FunctionDefinitionParam{
-				Name:        openai.F(c.toolName),
-				Description: openai.F(c.description),
-				Parameters: openai.F(openai.FunctionParameters{
+			Function: openai.FunctionDefinitionParam{
+				Name:        c.toolName,
+				Description: param.Opt[string]{Value: c.description},
+				Parameters: openai.FunctionParameters{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"restaurant": map[string]interface{}{
@@ -143,8 +142,8 @@ func (c *CuisineTool) OpenAI() []openai.ChatCompletionToolParam {
 						},
 					},
 					"required": []string{"restaurant"},
-				}),
-			}),
+				},
+			},
 		},
 	}
 }

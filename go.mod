@@ -2,7 +2,7 @@ module github.com/boat-builder/agentpod
 
 go 1.23.2
 
-require github.com/openai/openai-go v0.1.0-alpha.62
+require github.com/openai/openai-go v0.1.0-beta.5
 
 require (
 	github.com/matoous/go-nanoid/v2 v2.1.0
@@ -23,9 +23,9 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/rogpeppe/go-internal v1.6.1 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
-	golang.org/x/crypto v0.25.0 // indirect
-	golang.org/x/sync v0.7.0 // indirect
-	golang.org/x/text v0.16.0 // indirect
+	golang.org/x/crypto v0.32.0 // indirect
+	golang.org/x/sync v0.10.0 // indirect
+	golang.org/x/text v0.21.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

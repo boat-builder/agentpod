@@ -19,11 +19,11 @@ type LLM struct {
 	GenerationModel      string
 	SmallReasoningModel  string
 	SmallGenerationModel string
-	client               *openai.Client
+	client               openai.Client
 }
 
 func NewLLM(apiKey string, baseURL string, reasoningModel string, generationModel string, smallReasoningModel string, smallGenerationModel string) *LLM {
-	var client *openai.Client
+	var client openai.Client
 	if baseURL != "" {
 		client = openai.NewClient(option.WithBaseURL(baseURL), option.WithAPIKey(apiKey))
 	} else {

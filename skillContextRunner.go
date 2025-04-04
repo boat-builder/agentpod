@@ -9,48 +9,18 @@ import (
 
 	"github.com/boat-builder/agentpod/prompts"
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/packages/param"
 )
 
-func MessageWhenToolError(toolCallID string) openai.ChatCompletionToolMessageParam {
-	return openai.ChatCompletionToolMessageParam{
-		Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-		Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F("Error occurred while running. Do not retry")}}),
-		ToolCallID: openai.F(toolCallID),
-	}
+func MessageWhenToolError(toolCallID string) openai.ChatCompletionMessageParamUnion {
+	return openai.ToolMessage("Error occurred while running. Do not retry", toolCallID)
 }
 
-func MessageWhenToolErrorWithRetry(errorString string, toolCallID string) openai.ChatCompletionToolMessageParam {
-	return openai.ChatCompletionToolMessageParam{
-		Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-		Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(fmt.Sprintf("Error: %s.\nRetry", errorString))}}),
-		ToolCallID: openai.F(toolCallID),
-	}
+func MessageWhenToolErrorWithRetry(errorString string, toolCallID string) openai.ChatCompletionMessageParamUnion {
+	return openai.ToolMessage(fmt.Sprintf("Error: %s.\nRetry", errorString), toolCallID)
 }
 
-func (a *Agent) GenerateSummary(ctx context.Context, messages *MessageList, llmClient *LLM, modelName string) (string, error) {
-	a.logger.Info("Summarizing conversation")
-	lastUserMessage := messages.LastUserMessageString()
-	if lastUserMessage == "" {
-		return "", fmt.Errorf("no user message found")
-	}
-
-	summaryPrompt := fmt.Sprintf("Based on the conversation history, answer my original question.\nQuestion:%s", lastUserMessage)
-	messages.Add(DeveloperMessage(summaryPrompt))
-
-	completion, err := llmClient.New(
-		ctx,
-		openai.ChatCompletionNewParams{
-			Messages: openai.F(messages.All()),
-			Model:    openai.F(modelName),
-		})
-	if err != nil {
-		return "", err
-	}
-
-	return completion.Choices[0].Message.Content, nil
-}
-
-func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string) (openai.ChatCompletionToolMessageParam, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string) (*openai.ChatCompletionToolMessageParam, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 
 	promptData := prompts.SkillContextRunnerPromptData{
@@ -61,7 +31,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 	systemPrompt, err := prompts.SkillContextRunnerPrompt(promptData)
 	if err != nil {
 		a.logger.Error("Error getting system prompt", "error", err)
-		return openai.ChatCompletionToolMessageParam{}, err
+		return nil, err
 	}
 	messageHistory.AddFirst(systemPrompt)
 
@@ -75,14 +45,14 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		}
 
 		params := openai.ChatCompletionNewParams{
-			Messages:          openai.F(messageHistory.All()),
-			Model:             openai.F(modelToUse),
-			ReasoningEffort:   openai.F(openai.ChatCompletionReasoningEffortHigh),
-			ParallelToolCalls: openai.F(true),
+			Messages:          messageHistory.All(),
+			Model:             modelToUse,
+			ReasoningEffort:   "high",
+			ParallelToolCalls: param.Opt[bool]{Value: true},
 		}
 		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
 		if len(skill.GetTools()) > 0 {
-			params.Tools = openai.F(skill.GetTools())
+			params.Tools = skill.GetTools()
 		}
 
 		// we need this because we need to send thoughts to the user. The thoughts sending go routine
@@ -92,9 +62,9 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		completion, err := llm.New(ctx, params)
 		if err != nil {
 			a.logger.Error("Error calling LLM while running skill", "error", err)
-			return MessageWhenToolErrorWithRetry("Network error", skillToolCallID), err
+			return MessageWhenToolErrorWithRetry("Network error", skillToolCallID).OfTool, err
 		}
-		messageHistory.Add(completion.Choices[0].Message)
+		messageHistory.Add(completion.Choices[0].Message.ToParam())
 
 		// Check if both tool call and content are non-empty
 		bothToolCallAndContent := completion.Choices[0].Message.ToolCalls != nil && completion.Choices[0].Message.Content != ""
@@ -186,30 +156,20 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 				continue
 			}
 
-			messageHistory.Add(openai.ChatCompletionToolMessageParam{
-				Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-				Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(result.output)}}),
-				ToolCallID: openai.F(result.toolCall.ID),
-			})
+			messageHistory.Add(openai.ToolMessage(result.output, result.toolCall.ID))
 		}
 	}
 	allMessages := messageHistory.All()
 	lastMessage := allMessages[len(allMessages)-1]
 	// If it's a ChatCompletionMessage, convert it to a tool message
-	if chatMsg, ok := lastMessage.(openai.ChatCompletionMessage); ok {
-		content := chatMsg.Content
-
-		return openai.ChatCompletionToolMessageParam{
-			Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-			Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F(content)}}),
-			ToolCallID: openai.F(skillToolCallID),
-		}, nil
+	if lastMessage.GetRole() != nil && *lastMessage.GetRole() == "assistant" {
+		contentPtr := lastMessage.GetContent().AsAny().(*string)
+		if contentPtr == nil {
+			return openai.ToolMessage("Error: The skill execution did not produce a valid response", skillToolCallID).OfTool, nil
+		}
+		return openai.ToolMessage(*contentPtr, skillToolCallID).OfTool, nil
 	} else {
 		a.logger.Error("Unexpected message type in SkillContextRunner result", "type", fmt.Sprintf("%T", lastMessage))
-		return openai.ChatCompletionToolMessageParam{
-			Role:       openai.F(openai.ChatCompletionToolMessageParamRoleTool),
-			Content:    openai.F([]openai.ChatCompletionContentPartTextParam{{Type: openai.F(openai.ChatCompletionContentPartTextTypeText), Text: openai.F("Error: The skill execution did not produce a valid response")}}),
-			ToolCallID: openai.F(skillToolCallID),
-		}, nil
+		return openai.ToolMessage("Error: The skill execution did not produce a valid response", skillToolCallID).OfTool, nil
 	}
 }
