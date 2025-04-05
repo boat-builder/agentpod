@@ -166,6 +166,15 @@ func getUserPreferencesMemory(meta *agentpod.Meta) (*agentpod.MemoryBlock, error
 	return memoryBlock, nil
 }
 
+const mainPrompt = `You are a restaurant recommendation expert tasked with helping users find the perfect restaurant based on their location and cuisine preferences. Provide concise and direct recommendations using the available data from authorized tools.
+
+- Focus on the user's location and specified cuisine preferences.
+- Avoid making assumptions about restaurants that are not readily available through your tools.
+- Ensure recommendations are based solely on the data you can access.
+- Clearly communicate the recommendation and justify the choice with relevant details that enhance the user's decision-making process.
+
+(Note: Ensure all relevant data is provided and realistic for actual recommendations.)`
+
 func testRestaurantRecommendation(t *testing.T, prompt string) {
 	config := LoadConfig()
 	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
@@ -176,7 +185,7 @@ func testRestaurantRecommendation(t *testing.T, prompt string) {
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
 		"azure/o3-mini",
-		"azure/gpt-4o-mini",
+		"azure/gpt-4o",
 		"azure/o3-mini",
 		"azure/gpt-4o-mini",
 	)
@@ -190,17 +199,17 @@ func testRestaurantRecommendation(t *testing.T, prompt string) {
 	restaurantTool := NewRestaurantTool()
 	cuisineTool := NewCuisineTool()
 	restaurantAgent := agentpod.NewAgent(
-		"You are a restaurant recommendation expert. You help users find the perfect restaurant based on their location and cuisine preferences. Be concise and direct in your recommendations.",
+		mainPrompt,
 		[]agentpod.Skill{
 			{
 				Name:         "RestaurantExpert",
-				Description:  "Expert in restaurant recommendations",
+				Description:  "Expert in restaurant recommendations. You cannot make cusine recommendations. We have a cuisine expert for that.",
 				SystemPrompt: "As a restaurant expert, you provide personalized restaurant recommendations. Do not make any recommendations on dishes. We have cusines expert for that.",
 				Tools:        []agentpod.Tool{restaurantTool},
 			},
 			{
 				Name:         "CuisineExpert",
-				Description:  "Expert in cuisine and dishes, you provide dish recommendations for restaurants found by RestaurantExpert",
+				Description:  "Expert in cuisine and dishes, you provide dish recommendations for restaurants found by RestaurantExpert. Should not be called before restaurant expert made the restaurant recommendation.",
 				SystemPrompt: "As a cuisine expert, you provide dish recommendations for restaurants found by RestaurantExpert. You should only do recommendations on cusines for the restaurants you have access to. You should not assume the existance of any restaurants that you don't have access to",
 				Tools:        []agentpod.Tool{cuisineTool},
 			},
