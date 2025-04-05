@@ -475,10 +475,15 @@ func (a *Agent) Run(ctx context.Context, llm *LLM, messageHistory *MessageList, 
 					filteredToolCalls = append(filteredToolCalls, toolCall)
 				}
 			}
-			messageToAdd.ToolCalls = filteredToolCalls
+			// Only update and add the message if there are non-stop tool calls. We have this specific condition here because
+			// we tinker with the tool calls to filter out one of the call.
+			if len(filteredToolCalls) > 0 {
+				messageToAdd.ToolCalls = filteredToolCalls
+				messageHistory.Add(messageToAdd.ToParam())
+			}
+		} else {
+			messageHistory.Add(messageToAdd.ToParam())
 		}
-		messageHistory.Add(messageToAdd.ToParam())
-
 		// Add tool results to message history
 		for _, result := range skillCallResults {
 			messageHistory.Add(openai.ChatCompletionMessageParamUnion{OfTool: result})

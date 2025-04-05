@@ -65,3 +65,44 @@ func (ml *MessageList) Clone() *MessageList {
 func (ml *MessageList) Clear() {
 	ml.Messages = []openai.ChatCompletionMessageParamUnion{}
 }
+
+// PrintMessages is for debugging purposes
+func (ml *MessageList) PrintMessages() {
+	for _, msg := range ml.Messages {
+		role := "unknown"
+		content := ""
+
+		switch {
+		case msg.OfUser != nil:
+			role = "user"
+			if !msg.OfUser.Content.OfString.IsOmitted() {
+				content = msg.OfUser.Content.OfString.String()
+			}
+		case msg.OfAssistant != nil:
+			role = "assistant"
+			if !msg.OfAssistant.Content.OfString.IsOmitted() {
+				content = msg.OfAssistant.Content.OfString.String()
+			}
+			// Print tool calls if they exist
+			if len(msg.OfAssistant.ToolCalls) > 0 {
+				content += "\nTool Calls:"
+				for _, toolCall := range msg.OfAssistant.ToolCalls {
+					content += fmt.Sprintf("\n- Function: %s", toolCall.Function.Name)
+					content += fmt.Sprintf("\n  Arguments: %s", toolCall.Function.Arguments)
+				}
+			}
+		case msg.OfDeveloper != nil:
+			role = "developer"
+			if !msg.OfDeveloper.Content.OfString.IsOmitted() {
+				content = msg.OfDeveloper.Content.OfString.String()
+			}
+		case msg.OfTool != nil:
+			role = "tool"
+			if !msg.OfTool.Content.OfString.IsOmitted() {
+				content = msg.OfTool.Content.OfString.String()
+			}
+		}
+
+		fmt.Printf("Role: %s\nContent: %s\n\n", role, content)
+	}
+}

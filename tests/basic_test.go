@@ -147,9 +147,9 @@ func TestSimpleConversation(t *testing.T) {
 	llm := agentpod.NewLLM(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"azure/gpt-4o",
-		"azure/gpt-4o",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
 	)
 	mem := &MockMemory{}
@@ -173,7 +173,9 @@ func TestSimpleConversation(t *testing.T) {
 	var finalContent string
 	for {
 		out := convSession.Out()
-		finalContent += out.Content
+		if out.Type == agentpod.ResponseTypePartialText {
+			finalContent += out.Content
+		}
 		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
@@ -201,9 +203,9 @@ func TestConversationWithSkills(t *testing.T) {
 	llm := agentpod.NewLLM(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"azure/gpt-4o",
-		"azure/gpt-4o",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
 	)
 	mem := &MockMemory{
@@ -239,7 +241,9 @@ func TestConversationWithSkills(t *testing.T) {
 	var finalContent string
 	for {
 		out := convSession.Out()
-		finalContent += out.Content
+		if out.Type == agentpod.ResponseTypePartialText {
+			finalContent += out.Content
+		}
 		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
@@ -286,9 +290,9 @@ func TestConversationWithHistory(t *testing.T) {
 	llm := agentpod.NewLLM(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"azure/gpt-4o",
-		"azure/gpt-4o",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
 	)
 	mem := &MockMemory{
@@ -314,7 +318,9 @@ func TestConversationWithHistory(t *testing.T) {
 	var finalContent string
 	for {
 		out := convSession.Out()
-		finalContent += out.Content
+		if out.Type == agentpod.ResponseTypePartialText {
+			finalContent += out.Content
+		}
 		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
@@ -351,9 +357,9 @@ func TestMemoryRetrieval(t *testing.T) {
 	llm := agentpod.NewLLM(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"azure/gpt-4o",
-		"azure/gpt-4o",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
 	)
 
@@ -383,7 +389,9 @@ func TestMemoryRetrieval(t *testing.T) {
 	var finalContent string
 	for {
 		out := convSession.Out()
-		finalContent += out.Content
+		if out.Type == agentpod.ResponseTypePartialText {
+			finalContent += out.Content
+		}
 		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}

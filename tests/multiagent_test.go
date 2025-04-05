@@ -166,7 +166,7 @@ func getUserPreferencesMemory(meta *agentpod.Meta) (*agentpod.MemoryBlock, error
 	return memoryBlock, nil
 }
 
-func TestMultiAgentRestaurantRecommendation(t *testing.T) {
+func testRestaurantRecommendation(t *testing.T, prompt string) {
 	config := LoadConfig()
 	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
 		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
@@ -175,9 +175,9 @@ func TestMultiAgentRestaurantRecommendation(t *testing.T) {
 	llm := agentpod.NewLLM(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"azure/gpt-4o",
-		"azure/gpt-4o",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
+		"azure/o3-mini",
 		"azure/gpt-4o-mini",
 	)
 
@@ -222,12 +222,13 @@ func TestMultiAgentRestaurantRecommendation(t *testing.T) {
 		Extra:      map[string]string{"user_id": userID},
 	})
 
-	// Test restaurant recommendation
-	restaurantSession.In("What's a good restaurant for me? and what dishes do they have.")
+	restaurantSession.In(prompt)
 	var response string
 	for {
 		out := restaurantSession.Out()
-		response += out.Content
+		if out.Type == agentpod.ResponseTypePartialText {
+			response += out.Content
+		}
 		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
@@ -255,7 +256,17 @@ func TestMultiAgentRestaurantRecommendation(t *testing.T) {
 	if !storage.WasCreateConversationCalled() {
 		t.Fatal("Expected CreateConversation to be called")
 	}
-	if storage.GetUserMessage(sessionID) != "What's a good restaurant for me? and what dishes do they have." {
+	if storage.GetUserMessage(sessionID) != prompt {
 		t.Fatalf("Expected user message to match, got: %s", storage.GetUserMessage(sessionID))
 	}
+}
+
+func TestMultiAgentRestaurantRecommendationWithSummarizer(t *testing.T) {
+	prompt := "What's a good restaurant for me? and what dishes do they have. Make sure to call summarizer to properly summarize the response."
+	testRestaurantRecommendation(t, prompt)
+}
+
+func TestMultiAgentRestaurantRecommendationWithoutSummarizer(t *testing.T) {
+	prompt := "What's a good restaurant for me? and what dishes do they have? Do not call summarizer. Return the final response as it is."
+	testRestaurantRecommendation(t, prompt)
 }
