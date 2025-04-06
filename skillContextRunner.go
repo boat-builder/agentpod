@@ -19,7 +19,7 @@ func MessageWhenToolErrorWithRetry(errorString string, toolCallID string) openai
 	return openai.ToolMessage(fmt.Sprintf("Error: %s.\nRetry", errorString), toolCallID)
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm *LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string) (*openai.ChatCompletionToolMessageParam, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, meta Meta, messageHistory *MessageList, llm *LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string) (*openai.ChatCompletionToolMessageParam, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 
 	promptData := prompts.SkillContextRunnerPromptData{
@@ -124,7 +124,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 					return
 				}
 
-				output, err := tool.Execute(arguments)
+				output, err := tool.Execute(ctx, meta, arguments)
 				resultChan <- struct {
 					toolCall openai.ChatCompletionMessageToolCall
 					output   string

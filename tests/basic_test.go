@@ -71,7 +71,7 @@ func (b *BestAppleFinder) OpenAI() []openai.ChatCompletionToolParam {
 	}
 }
 
-func (b *BestAppleFinder) Execute(args map[string]interface{}) (string, error) {
+func (b *BestAppleFinder) Execute(ctx context.Context, meta agentpod.Meta, args map[string]interface{}) (string, error) {
 	return "green apple", nil
 }
 

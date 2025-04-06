@@ -84,7 +84,7 @@ func (r *RestaurantTool) OpenAI() []openai.ChatCompletionToolParam {
 	}
 }
 
-func (r *RestaurantTool) Execute(args map[string]interface{}) (string, error) {
+func (r *RestaurantTool) Execute(ctx context.Context, meta agentpod.Meta, args map[string]interface{}) (string, error) {
 	location := args["location"].(string)
 	cuisine := args["cuisine"].(string)
 
@@ -148,7 +148,7 @@ func (c *CuisineTool) OpenAI() []openai.ChatCompletionToolParam {
 	}
 }
 
-func (c *CuisineTool) Execute(args map[string]interface{}) (string, error) {
+func (c *CuisineTool) Execute(ctx context.Context, meta agentpod.Meta, args map[string]interface{}) (string, error) {
 	restaurant := args["restaurant"].(string)
 	if dishes, ok := c.dishes[restaurant]; ok {
 		return strings.Join(dishes, ", "), nil

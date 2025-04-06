@@ -126,7 +126,7 @@ func (s *Session) run() {
 		// Ensure channel is closed when we're done with it
 		defer close(internalChannel)
 
-		go s.agent.Run(s.ctx, s.llm, messageHistory, memoryBlock, internalChannel)
+		go s.agent.Run(s.ctx, s.meta, s.llm, messageHistory, memoryBlock, internalChannel)
 
 		for response := range internalChannel {
 			s.outUserChannel <- response
