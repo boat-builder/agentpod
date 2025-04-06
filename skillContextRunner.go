@@ -9,7 +9,6 @@ import (
 
 	"github.com/boat-builder/agentpod/prompts"
 	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/packages/param"
 )
 
 func MessageWhenToolError(toolCallID string) openai.ChatCompletionMessageParamUnion {
@@ -45,10 +44,9 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		}
 
 		params := openai.ChatCompletionNewParams{
-			Messages:          messageHistory.All(),
-			Model:             modelToUse,
-			ReasoningEffort:   "high",
-			ParallelToolCalls: param.Opt[bool]{Value: true},
+			Messages:        messageHistory.All(),
+			Model:           modelToUse,
+			ReasoningEffort: "high",
 		}
 		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
 		if len(skill.GetTools()) > 0 {

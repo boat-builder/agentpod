@@ -50,9 +50,11 @@ func optsWithIds(ctx context.Context, opts []option.RequestOption) []option.Requ
 	}
 
 	if extraMeta, ok := ctx.Value(ContextKey("extra")).(map[string]string); ok {
+		metadata := make(map[string]string)
 		for key, value := range extraMeta {
-			opts = append(opts, option.WithJSONSet(key, value))
+			metadata[key] = value
 		}
+		opts = append(opts, option.WithJSONSet("metadata", metadata))
 	}
 
 	return opts

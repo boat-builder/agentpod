@@ -156,11 +156,10 @@ func (a *Agent) decideNextAction(ctx context.Context, llm *LLM, clonedMessages *
 	}
 	// TODO make it strict to call the tool when the openai sdk supports passing the option 'required'
 	params := openai.ChatCompletionNewParams{
-		Messages:          clonedMessages.All(),
-		Model:             llm.GenerationModel,
-		ToolChoice:        openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: param.Opt[string]{Value: "auto"}},
-		ParallelToolCalls: param.Opt[bool]{Value: true},
-		Tools:             tools,
+		Messages:   clonedMessages.All(),
+		Model:      llm.GenerationModel,
+		ToolChoice: openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: param.Opt[string]{Value: "auto"}},
+		Tools:      tools,
 	}
 
 	completion, err := llm.New(ctx, params)
