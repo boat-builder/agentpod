@@ -30,7 +30,8 @@ type Session struct {
 
 	meta Meta
 
-	logger *slog.Logger
+	isConversational bool
+	logger           *slog.Logger
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
@@ -55,8 +56,15 @@ func NewSession(ctx context.Context, llm *LLM, mem Memory, ag *Agent, storage St
 		meta: meta,
 
 		logger: slog.Default(),
+
+		isConversational: true,
 	}
 	go s.run()
+	return s
+}
+
+func (s *Session) WithConversationDisabled() *Session {
+	s.isConversational = false
 	return s
 }
 
@@ -126,7 +134,7 @@ func (s *Session) run() {
 		// Ensure channel is closed when we're done with it
 		defer close(internalChannel)
 
-		go s.agent.Run(s.ctx, s.meta, s.llm, messageHistory, memoryBlock, internalChannel)
+		go s.agent.Run(s.ctx, s.meta, s.llm, messageHistory, memoryBlock, internalChannel, s.isConversational)
 
 		for response := range internalChannel {
 			s.outUserChannel <- response

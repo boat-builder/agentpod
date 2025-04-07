@@ -369,7 +369,7 @@ func (a *Agent) runWithoutSkills(ctx context.Context, llm *LLM, messageHistory *
 
 // Run processes a user message through the LLM, executes any requested skills. It returns only after the agent is done.
 // The intermediary messages are sent to the outUserChannel.
-func (a *Agent) Run(ctx context.Context, meta Meta, llm *LLM, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response) {
+func (a *Agent) Run(ctx context.Context, meta Meta, llm *LLM, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response, isConversational bool) {
 	if a.logger == nil {
 		panic("logger is not set")
 	}
@@ -437,8 +437,10 @@ func (a *Agent) Run(ctx context.Context, meta Meta, llm *LLM, messageHistory *Me
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 
-		// sending fake thoughts to the user to keep the user engaged
-		go a.sendThoughtsAboutSkills(ctx, llm, messageHistory.Clone(), skillToolCalls, outUserChannel)
+		if isConversational {
+			// sending fake thoughts to the user to keep the user engaged
+			go a.sendThoughtsAboutSkills(ctx, llm, messageHistory.Clone(), skillToolCalls, outUserChannel)
+		}
 
 		for _, tool := range skillToolCalls {
 			skill, err := a.GetSkill(tool.Function.Name)
@@ -451,7 +453,7 @@ func (a *Agent) Run(ctx context.Context, meta Meta, llm *LLM, messageHistory *Me
 			go func(skill *Skill, toolID string) {
 				defer wg.Done()
 				// Clone the messages again so all goroutines get different message history
-				result, err := a.SkillContextRunner(ctx, meta, messageHistory.Clone(), llm, outUserChannel, memoryBlock, skill, tool.ID)
+				result, err := a.SkillContextRunner(ctx, meta, messageHistory.Clone(), llm, outUserChannel, memoryBlock, skill, tool.ID, isConversational)
 				if err != nil {
 					a.logger.Error("Error running skill", "error", err)
 					return

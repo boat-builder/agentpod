@@ -19,7 +19,7 @@ func MessageWhenToolErrorWithRetry(errorString string, toolCallID string) openai
 	return openai.ToolMessage(fmt.Sprintf("Error: %s.\nRetry", errorString), toolCallID)
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, meta Meta, messageHistory *MessageList, llm *LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string) (*openai.ChatCompletionToolMessageParam, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, meta Meta, messageHistory *MessageList, llm *LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string, isConversational bool) (*openai.ChatCompletionToolMessageParam, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 
 	promptData := prompts.SkillContextRunnerPromptData{
@@ -74,10 +74,12 @@ func (a *Agent) SkillContextRunner(ctx context.Context, meta Meta, messageHistor
 		if completion.Choices[0].Message.ToolCalls == nil {
 			break
 		}
-
-		// sending fake thoughts to the user to keep the user engaged
 		toolsToCall := completion.Choices[0].Message.ToolCalls
-		go a.sendThoughtsAboutTools(ctx, llm, messageHistoryBeforeLLMCall, toolsToCall, outChan)
+
+		if isConversational {
+			// sending fake thoughts to the user to keep the user engaged
+			go a.sendThoughtsAboutTools(ctx, llm, messageHistoryBeforeLLMCall, toolsToCall, outChan)
+		}
 
 		// Create a wait group to wait for all tool executions to complete
 		var wg sync.WaitGroup
