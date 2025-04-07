@@ -502,6 +502,11 @@ func (a *Agent) Run(ctx context.Context, meta Meta, llm *LLM, messageHistory *Me
 		}
 	}
 
+	// if not conversational, rest of the code is not needed as that is for sending the final message to the user
+	if !isConversational {
+		return
+	}
+
 	// Handle final results based on the callSummarizer parameter from the stop tool or if multiple skills were called
 	if callSummarizer || len(finalSkillCallResults) > 1 {
 		// If callSummarizer is true, summarize the results
