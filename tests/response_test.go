@@ -11,7 +11,7 @@ import (
 	"github.com/openai/openai-go/shared"
 )
 
-func TestNewResponse(t *testing.T) {
+func TestNewResponseWithWebSearchTool(t *testing.T) {
 	config := LoadConfig()
 	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
 		t.Skip("Skipping test because Keywords AI credentials are not set")
@@ -21,10 +21,10 @@ func TestNewResponse(t *testing.T) {
 	llm := agentpod.NewLLM(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"azure/o3-mini",
-		"azure/gpt-4o-mini",
-		"azure/o3-mini",
-		"azure/gpt-4o-mini",
+		"o3-mini",
+		"gpt-4o-mini",
+		"o3-mini",
+		"gpt-4o-mini",
 	)
 
 	// Create a context with metadata
@@ -37,9 +37,21 @@ func TestNewResponse(t *testing.T) {
 
 	// Create test parameters for the Response API
 	params := responses.ResponseNewParams{
-		Model: shared.ResponsesModel("gpt-4"),
+		Model: shared.ResponsesModel("gpt-4o"),
 		Input: responses.ResponseNewParamsInputUnion{
 			OfString: param.Opt[string]{Value: "What is the capital of France?"},
+		},
+		Tools: []responses.ToolUnionParam{
+			{
+				OfWebSearch: &responses.WebSearchToolParam{
+					Type: responses.WebSearchToolTypeWebSearchPreview,
+				},
+			},
+		},
+		ToolChoice: responses.ResponseNewParamsToolChoiceUnion{
+			OfHostedTool: &responses.ToolChoiceTypesParam{
+				Type: responses.ToolChoiceTypesTypeWebSearchPreview,
+			},
 		},
 	}
 
@@ -58,6 +70,14 @@ func TestNewResponse(t *testing.T) {
 	// Note: The actual content will depend on the model's response
 	if response.OutputText() == "" {
 		t.Error("Expected non-empty response content")
+	}
+
+	if response.Output[0].Type != "web_search_call" {
+		t.Errorf("Expected output type to be 'web_search_call', got: %s", response.Output[0].Type)
+	}
+
+	if response.Output[0].Status == "" {
+		t.Error("Expected non-empty status for web search call")
 	}
 
 	// Verify the response contains the correct answer
