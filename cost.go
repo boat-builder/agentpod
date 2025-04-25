@@ -15,6 +15,16 @@ const (
 	O3MiniOutputRate    = 4.40
 	O1InputRate         = 15.0
 	O1OutputRate        = 60.0
+	O3InputRate         = 10.0
+	O3OutputRate        = 40.0
+	O4MiniInputRate     = 1.10
+	O4MiniOutputRate    = 4.40
+	GPT41InputRate      = 2.0
+	GPT41OutputRate     = 8.0
+	GPT41MiniInputRate  = 0.40
+	GPT41MiniOutputRate = 1.60
+	GPT41NanoInputRate  = 0.10
+	GPT41NanoOutputRate = 0.40
 )
 
 // ModelPricings is a map of model names to their pricing information
@@ -32,8 +42,28 @@ var ModelPricings = map[string]TokenRates{
 		Output: O3MiniOutputRate,
 	},
 	"o1": {
-		Input:  O3MiniInputRate,
-		Output: O3MiniOutputRate,
+		Input:  O1InputRate,
+		Output: O1OutputRate,
+	},
+	"o3": {
+		Input:  O3InputRate,
+		Output: O3OutputRate,
+	},
+	"o4-mini": {
+		Input:  O4MiniInputRate,
+		Output: O4MiniOutputRate,
+	},
+	"gpt-4.1": {
+		Input:  GPT41InputRate,
+		Output: GPT41OutputRate,
+	},
+	"gpt-4.1-mini": {
+		Input:  GPT41MiniInputRate,
+		Output: GPT41MiniOutputRate,
+	},
+	"gpt-4.1-nano": {
+		Input:  GPT41NanoInputRate,
+		Output: GPT41NanoOutputRate,
 	},
 	"azure/gpt-4o": {
 		Input:  GPT4oInputRate,
@@ -48,8 +78,28 @@ var ModelPricings = map[string]TokenRates{
 		Output: O3MiniOutputRate,
 	},
 	"azure/o1": {
-		Input:  O3MiniInputRate,
-		Output: O3MiniOutputRate,
+		Input:  O1InputRate,
+		Output: O1OutputRate,
+	},
+	"azure/o3": {
+		Input:  O3InputRate,
+		Output: O3OutputRate,
+	},
+	"azure/o4-mini": {
+		Input:  O4MiniInputRate,
+		Output: O4MiniOutputRate,
+	},
+	"azure/gpt-4.1": {
+		Input:  GPT41InputRate,
+		Output: GPT41OutputRate,
+	},
+	"azure/gpt-4.1-mini": {
+		Input:  GPT41MiniInputRate,
+		Output: GPT41MiniOutputRate,
+	},
+	"azure/gpt-4.1-nano": {
+		Input:  GPT41NanoInputRate,
+		Output: GPT41NanoOutputRate,
 	},
 }
 
