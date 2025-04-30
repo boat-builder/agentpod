@@ -2,7 +2,6 @@ package tests
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/boat-builder/agentpod"
@@ -39,7 +38,7 @@ func TestNewResponseWithWebSearchTool(t *testing.T) {
 	params := responses.ResponseNewParams{
 		Model: shared.ResponsesModel("gpt-4o"),
 		Input: responses.ResponseNewParamsInputUnion{
-			OfString: param.Opt[string]{Value: "What is the capital of France?"},
+			OfString: param.Opt[string]{Value: "Where to buy the Sargent 8888 F Rim Exit Device?"},
 		},
 		Tools: []responses.ToolUnionParam{
 			{
@@ -80,9 +79,28 @@ func TestNewResponseWithWebSearchTool(t *testing.T) {
 		t.Error("Expected non-empty status for web search call")
 	}
 
-	// Verify the response contains the correct answer
-	if !strings.Contains(strings.ToLower(response.OutputText()), "paris") {
-		t.Errorf("Expected response to contain 'Paris', got: %s", response.OutputText())
+	// Verify there is at least one annotation in the response
+	foundAnnotation := false
+	for _, output := range response.Output {
+		if output.Type == "refusal" {
+			continue
+		}
+		for _, content := range output.Content {
+			if content.Type == "output_text" && len(content.Annotations) > 0 {
+				foundAnnotation = true
+				break
+			}
+		}
+		if foundAnnotation {
+			break
+		}
+	}
+	if !foundAnnotation {
+		t.Error("Expected at least one annotation in the response")
 	}
 
+	// Verify the response contains the correct answer
+	// if !strings.Contains(strings.ToLower(response.OutputText()), "paris") {
+	// 	t.Errorf("Expected response to contain 'Paris', got: %s", response.OutputText())
+	// }
 }
