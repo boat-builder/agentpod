@@ -20,10 +20,8 @@ func TestNewResponseWithWebSearchTool(t *testing.T) {
 	llm := agentpod.NewLLM(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"o3-mini",
-		"gpt-4o-mini",
-		"o3-mini",
-		"gpt-4o-mini",
+		"azure/o3-mini",
+		"azure/gpt-4o-mini",
 	)
 
 	// Create a context with metadata

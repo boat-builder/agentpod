@@ -16,16 +16,14 @@ import (
 type ContextKey string
 
 type KeywordsAIClient struct {
-	APIKey               string
-	BaseURL              string
-	ReasoningModel       string
-	GenerationModel      string
-	SmallReasoningModel  string
-	SmallGenerationModel string
-	client               openai.Client
+	APIKey       string
+	BaseURL      string
+	_strongModel string
+	_cheapModel  string
+	client       openai.Client
 }
 
-func NewKeywordsAIClient(apiKey string, baseURL string, reasoningModel string, generationModel string, smallReasoningModel string, smallGenerationModel string) *KeywordsAIClient {
+func NewKeywordsAIClient(apiKey string, baseURL string, strongModel string, cheapModel string) *KeywordsAIClient {
 	var client openai.Client
 	if baseURL != "" {
 		client = openai.NewClient(option.WithBaseURL(baseURL), option.WithAPIKey(apiKey))
@@ -33,13 +31,11 @@ func NewKeywordsAIClient(apiKey string, baseURL string, reasoningModel string, g
 		client = openai.NewClient(option.WithAPIKey(apiKey))
 	}
 	return &KeywordsAIClient{
-		APIKey:               apiKey,
-		BaseURL:              baseURL,
-		ReasoningModel:       reasoningModel,
-		GenerationModel:      generationModel,
-		SmallReasoningModel:  smallReasoningModel,
-		SmallGenerationModel: smallGenerationModel,
-		client:               client,
+		APIKey:       apiKey,
+		BaseURL:      baseURL,
+		_strongModel: strongModel,
+		_cheapModel:  cheapModel,
+		client:       client,
 	}
 }
 
@@ -108,20 +104,12 @@ func (c *KeywordsAIClient) NewResponse(ctx context.Context, params responses.Res
 	return c.client.Responses.New(ctx, params, opts...)
 }
 
-func (c *KeywordsAIClient) GetGenerationModel() string {
-	return c.GenerationModel
+func (c *KeywordsAIClient) CheapModel() string {
+	return c._cheapModel
 }
 
-func (c *KeywordsAIClient) GetReasoningModel() string {
-	return c.ReasoningModel
-}
-
-func (c *KeywordsAIClient) GetSmallGenerationModel() string {
-	return c.SmallGenerationModel
-}
-
-func (c *KeywordsAIClient) GetSmallReasoningModel() string {
-	return c.SmallReasoningModel
+func (c *KeywordsAIClient) StrongModel() string {
+	return c._strongModel
 }
 
 func GenerateSchema[T any]() interface{} {
@@ -139,6 +127,6 @@ var _ LLM = (*KeywordsAIClient)(nil)
 
 // NewLLM is a convenience wrapper maintained to avoid widespread signature
 // changes across the codebase. It simply delegates to NewKeywordsAIClient.
-func NewLLM(apiKey string, baseURL string, reasoningModel string, generationModel string, smallReasoningModel string, smallGenerationModel string) *KeywordsAIClient {
-	return NewKeywordsAIClient(apiKey, baseURL, reasoningModel, generationModel, smallReasoningModel, smallGenerationModel)
+func NewLLM(apiKey string, baseURL string, strongModel string, cheapModel string) *KeywordsAIClient {
+	return NewKeywordsAIClient(apiKey, baseURL, strongModel, cheapModel)
 }

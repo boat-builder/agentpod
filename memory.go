@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // ValueType represents the type of a memory value
@@ -72,30 +73,51 @@ func (mv MemoryValue) IsBlock() bool {
 // MemoryBlock represents a key-value store where values can be strings or nested MemoryBlocks
 type MemoryBlock struct {
 	Items map[string]MemoryValue // For storing multiple key-value pairs
+	keys  []string
+	mu    sync.RWMutex
 }
 
 // NewMemoryBlock creates a new MemoryBlock with initialized map
 func NewMemoryBlock() *MemoryBlock {
 	return &MemoryBlock{
 		Items: make(map[string]MemoryValue),
+		keys:  []string{},
 	}
 }
 
 // AddString adds a string value for the given key
 func (mb *MemoryBlock) AddString(key string, value string) {
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+	if _, exists := mb.Items[key]; !exists {
+		mb.keys = append(mb.keys, key)
+	}
 	mb.Items[key] = NewStringValue(value)
 }
 
 // AddBlock adds a MemoryBlock value for the given key
 func (mb *MemoryBlock) AddBlock(key string, value *MemoryBlock) {
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+	if _, exists := mb.Items[key]; !exists {
+		mb.keys = append(mb.keys, key)
+	}
 	mb.Items[key] = NewBlockValue(value)
 }
 
 // Delete removes a key-value pair from the MemoryBlock
 // Returns true if the key was found and deleted, false otherwise
 func (mb *MemoryBlock) Delete(key string) bool {
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
 	if _, exists := mb.Items[key]; exists {
 		delete(mb.Items, key)
+		for i, k := range mb.keys {
+			if k == key {
+				mb.keys = append(mb.keys[:i], mb.keys[i+1:]...)
+				break
+			}
+		}
 		return true
 	}
 	return false
@@ -103,6 +125,8 @@ func (mb *MemoryBlock) Delete(key string) bool {
 
 // Exists checks if a key exists in the MemoryBlock
 func (mb *MemoryBlock) Exists(key string) bool {
+	mb.mu.RLock()
+	defer mb.mu.RUnlock()
 	_, exists := mb.Items[key]
 	return exists
 }
@@ -115,23 +139,21 @@ func (mb *MemoryBlock) Parse() string {
 
 // parseWithIndent is a helper method for Parse that handles indentation
 func (mb *MemoryBlock) parseWithIndent(level int, tagName string) string {
+	mb.mu.RLock()
+	defer mb.mu.RUnlock()
 	var result strings.Builder
 	indent := strings.Repeat("  ", level)
 
 	// Open tag
 	result.WriteString(fmt.Sprintf("%s<%s>\n", indent, tagName))
 
-	// First process all string values
-	for k, v := range mb.Items {
+	// Process all values in insertion order
+	for _, k := range mb.keys {
+		v := mb.Items[k]
 		if v.IsString() {
 			innerIndent := strings.Repeat("  ", level+1)
 			result.WriteString(fmt.Sprintf("%s%s: %v\n", innerIndent, k, v.AsString()))
-		}
-	}
-
-	// Then process all nested blocks
-	for k, v := range mb.Items {
-		if v.IsBlock() {
+		} else if v.IsBlock() {
 			result.WriteString(v.AsBlock().parseWithIndent(level+1, k))
 		}
 	}
