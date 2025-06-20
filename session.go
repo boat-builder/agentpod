@@ -72,6 +72,7 @@ func (s *Session) Close() {
 	s.closeOnce.Do(func() {
 		s.cancel()
 		close(s.inUserChannel)
+		close(s.outUserChannel)
 	})
 }
 
@@ -119,9 +120,7 @@ func (s *Session) run() {
 		// This prevents race conditions between aggregation and storage operations
 		internalChannel := make(chan Response)
 		var aggregatedResponse string
-
-		// Ensure channel is closed when we're done with it
-		defer close(internalChannel)
+		var hadError bool
 
 		go s.agent.Run(s.ctx, s.llm, messageHistory, memoryBlock, internalChannel)
 
@@ -130,15 +129,18 @@ func (s *Session) run() {
 			if response.Type == ResponseTypePartialText {
 				aggregatedResponse += response.Content
 			}
-			if response.Type == ResponseTypeEnd {
+			if response.Type == ResponseTypeError {
+				hadError = true
 				break
 			}
 		}
 
 		// Finish the conversation in the store with the fully aggregated response
-		err = storage.AddAssistantMessage(s.ctx, aggregatedResponse)
-		if err != nil {
-			s.logger.Error("Error finishing conversation", "error", err)
+		if !hadError {
+			err = storage.AddAssistantMessage(s.ctx, aggregatedResponse)
+			if err != nil {
+				s.logger.Error("Error finishing conversation", "error", err)
+			}
 		}
 
 		// Run method is done, send the final message

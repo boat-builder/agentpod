@@ -80,13 +80,6 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 					return
 				}
 
-				if tool.StatusMessage() != "" {
-					outChan <- Response{
-						Content: tool.StatusMessage(),
-						Type:    ResponseTypeStatus,
-					}
-				}
-
 				a.logger.Info("Tool", "tool", tool.Name(), "arguments", toolCall.Function.Arguments)
 				arguments := map[string]interface{}{}
 				err = json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments)

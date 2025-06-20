@@ -264,13 +264,16 @@ func TestECommerceOrderFulfillment(t *testing.T) {
 	var finalContent string
 	for {
 		out := convSession.Out()
-		if out.Type == agentpod.ResponseTypePartialText {
+		switch out.Type {
+		case agentpod.ResponseTypePartialText:
 			finalContent += out.Content
-		}
-		if out.Type == agentpod.ResponseTypeEnd {
-			break
+		case agentpod.ResponseTypeError:
+			t.Fatalf("Received an unexpected error: %s", out.Content)
+		case agentpod.ResponseTypeEnd:
+			goto endLoop
 		}
 	}
+endLoop:
 
 	// Assert final state
 	db.mu.Lock()
