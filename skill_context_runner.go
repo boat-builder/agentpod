@@ -8,7 +8,10 @@ import (
 
 	"github.com/boat-builder/agentpod/prompts"
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/packages/param"
 )
+
+const maxSkillLoops = 25
 
 func MessageWhenToolError(toolCallID string) openai.ChatCompletionMessageParamUnion {
 	return openai.ToolMessage("Error occurred while running. Do not retry", toolCallID)
@@ -18,7 +21,7 @@ func MessageWhenToolErrorWithRetry(errorString string, toolCallID string) openai
 	return openai.ToolMessage(fmt.Sprintf("Error: %s.\nRetry", errorString), toolCallID)
 }
 
-func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm LLM, outChan chan Response, memoryBlock *MemoryBlock, skill *Skill, skillToolCallID string) (*openai.ChatCompletionToolMessageParam, error) {
+func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm LLM, memoryBlock *MemoryBlock, skill *Skill, skillToolCall openai.ChatCompletionMessageToolCall) (*openai.ChatCompletionToolMessageParam, error) {
 	a.logger.Info("Running skill", "skill", skill.Name)
 
 	promptData := prompts.SkillContextRunnerPromptData{
@@ -33,35 +36,92 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 	}
 	messageHistory.AddFirst(systemPrompt)
 
-	for {
+	// Extract the "instruction" argument from the tool call and append it as a user message so that the LLM
+	// inside the skill context clearly understands the task it needs to perform.
+	if skillToolCall.Function.Arguments != "" {
+		var toolArgs map[string]interface{}
+		if err := json.Unmarshal([]byte(skillToolCall.Function.Arguments), &toolArgs); err == nil {
+			if instr, ok := toolArgs["instruction"].(string); ok && instr != "" {
+				messageHistory.Add(UserMessage(instr))
+			}
+		} else {
+			a.logger.Error("Error unmarshalling instruction from tool call arguments", "error", err)
+		}
+	}
+
+	var (
+		hasStopToolCall  bool
+		stopToolResponse string
+	)
+
+	for i := 0; ; i++ {
+		if i >= maxSkillLoops {
+			a.logger.Error("skill has reached max loop count", "skill", skill.Name, "count", maxSkillLoops)
+			return openai.ToolMessage("Error: The skill exceeded maximum allowed iterations and was stopped.", skillToolCall.ID).OfTool, fmt.Errorf("skill %s exceeded max loop iterations", skill.Name)
+		}
+
+		// Build the list of tools exposed to the skill-level LLM. Always include the
+		// stop tool so that the model can explicitly finish execution when needed.
+		tools := []openai.ChatCompletionToolParam{a.StopTool()}
+		if len(skill.GetTools()) > 0 {
+			tools = append(tools, skill.GetTools()...)
+		}
+
 		params := openai.ChatCompletionNewParams{
 			Messages:        messageHistory.All(),
 			Model:           llm.StrongModel(),
 			ReasoningEffort: "high",
-		}
-		a.logger.Info("Running skill", "skill", skill.Name, "tools", skill.Tools)
-		if len(skill.GetTools()) > 0 {
-			params.Tools = skill.GetTools()
+			ToolChoice:      openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: param.Opt[string]{Value: "required"}},
+			Tools:           tools,
 		}
 
 		completion, err := llm.New(ctx, params)
 		if err != nil {
 			a.logger.Error("Error calling LLM while running skill", "error", err)
-			return MessageWhenToolErrorWithRetry("Network error", skillToolCallID).OfTool, err
-		}
-		messageHistory.Add(completion.Choices[0].Message.ToParam())
-
-		// Check if both tool call and content are non-empty
-		bothToolCallAndContent := completion.Choices[0].Message.ToolCalls != nil && completion.Choices[0].Message.Content != ""
-		if bothToolCallAndContent {
-			a.logger.Error("Expectation is that tool call and content shouldn't both be non-empty", "message", completion.Choices[0].Message)
+			return MessageWhenToolErrorWithRetry("Network error", skillToolCall.ID).OfTool, err
 		}
 
-		// if there is no tool call, break
-		if completion.Choices[0].Message.ToolCalls == nil {
-			break
+		// Separate stop tool calls (if any) from other tool calls so that we can
+		// execute only the skill tools while respecting the stop request.
+		skillToolCalls := []openai.ChatCompletionMessageToolCall{}
+
+		if completion.Choices[0].Message.ToolCalls != nil {
+			for _, tc := range completion.Choices[0].Message.ToolCalls {
+				if tc.Function.Name == "stop" {
+					hasStopToolCall = true
+					if tc.Function.Arguments != "" {
+						var args map[string]interface{}
+						if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil {
+							if resp, ok := args["response"].(string); ok {
+								stopToolResponse = resp
+							}
+						}
+					}
+				} else {
+					skillToolCalls = append(skillToolCalls, tc)
+				}
+			}
 		}
-		toolsToCall := completion.Choices[0].Message.ToolCalls
+
+		// Add the assistant message to history but filter out the stop tool call so that
+		// subsequent reasoning cycles don't see it again.
+		messageToAdd := completion.Choices[0].Message
+		if messageToAdd.ToolCalls != nil {
+			filtered := []openai.ChatCompletionMessageToolCall{}
+			for _, tc := range messageToAdd.ToolCalls {
+				if tc.Function.Name != "stop" {
+					filtered = append(filtered, tc)
+				}
+			}
+			if len(filtered) > 0 {
+				messageToAdd.ToolCalls = filtered
+				messageHistory.Add(messageToAdd.ToParam())
+			}
+		} else {
+			messageHistory.Add(messageToAdd.ToParam())
+		}
+
+		toolsToCall := skillToolCalls
 
 		// Create a wait group to wait for all tool executions to complete
 		var wg sync.WaitGroup
@@ -69,6 +129,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 		resultsChan := make(chan *openai.ChatCompletionToolMessageParam, len(toolsToCall))
 
 		for _, toolCall := range toolsToCall {
+			a.logger.Info("Running tool for the skill", "skill", skill.Name, "tool", toolCall.Function.Name)
 			wg.Add(1)
 			go func(toolCall openai.ChatCompletionMessageToolCall) {
 				defer wg.Done()
@@ -80,7 +141,6 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 					return
 				}
 
-				a.logger.Info("Tool", "tool", tool.Name(), "arguments", toolCall.Function.Arguments)
 				arguments := map[string]interface{}{}
 				err = json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments)
 				if err != nil {
@@ -114,19 +174,25 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 
 			messageHistory.Add(openai.ChatCompletionMessageParamUnion{OfTool: result})
 		}
+
+		// If a stop tool was requested, break out of the loop after processing the
+		// remaining tool calls.
+		if hasStopToolCall {
+			break
+		}
+
+		if completion.Choices[0].Message.ToolCalls == nil {
+			// The model returned no tool calls, meaning it provided a direct answer. We can
+			// exit early as there is nothing left to execute.
+			break
+		}
 	}
 
-	allMessages := messageHistory.All()
-	lastMessage := allMessages[len(allMessages)-1]
-	// If it's a ChatCompletionMessage, convert it to a tool message
-	if lastMessage.GetRole() != nil && *lastMessage.GetRole() == "assistant" {
-		contentPtr := lastMessage.GetContent().AsAny().(*string)
-		if contentPtr == nil {
-			return openai.ToolMessage("Error: The skill execution did not produce a valid response", skillToolCallID).OfTool, nil
-		}
-		return openai.ToolMessage(*contentPtr, skillToolCallID).OfTool, nil
-	} else {
-		a.logger.Error("Unexpected message type in SkillContextRunner result", "type", fmt.Sprintf("%T", lastMessage))
-		return openai.ToolMessage("Error: The skill execution did not produce a valid response", skillToolCallID).OfTool, nil
+	// If stop tool provided a response, return it.
+	if stopToolResponse != "" {
+		return openai.ToolMessage(stopToolResponse, skillToolCall.ID).OfTool, nil
 	}
+
+	a.logger.Error("Unexpected situation in SkillContextRunner result. Function is done but stop response is empty")
+	return openai.ToolMessage("Error: The skill execution did not produce a valid response", skillToolCall.ID).OfTool, nil
 }

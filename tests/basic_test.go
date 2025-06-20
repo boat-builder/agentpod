@@ -2,10 +2,14 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/boat-builder/agentpod"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/packages/param"
 )
 
 // MockMemory implements the Memory interface for testing
@@ -44,7 +48,51 @@ func getCountryMemory(ctx context.Context) (*agentpod.MemoryBlock, error) {
 	return memoryBlock, nil
 }
 
-func TestMemoryRetrieval(t *testing.T) {
+// PopulationTool is a mock tool for testing purposes.
+type PopulationTool struct {
+	mu         sync.Mutex
+	WasCalled  bool
+	CountryArg string
+}
+
+func (t *PopulationTool) Name() string { return "get_country_population" }
+func (t *PopulationTool) Description() string {
+	return "Gets the population for a given country."
+}
+
+func (t *PopulationTool) OpenAI() []openai.ChatCompletionToolParam {
+	return []openai.ChatCompletionToolParam{
+		{
+			Function: openai.FunctionDefinitionParam{
+				Name:        t.Name(),
+				Description: param.Opt[string]{Value: t.Description()},
+				Parameters: openai.FunctionParameters{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"country": map[string]interface{}{
+							"type":        "string",
+							"description": "The country to get the population for.",
+						},
+					},
+					"required": []string{"country"},
+				},
+			},
+		},
+	}
+}
+
+func (t *PopulationTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if country, ok := args["country"].(string); ok {
+		t.WasCalled = true
+		t.CountryArg = country
+		return "The population is 50 million", nil
+	}
+	return "", fmt.Errorf("country argument is missing or not a string")
+}
+
+func TestSkillWithMemory(t *testing.T) {
 	config := LoadConfig()
 	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
 		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
@@ -62,7 +110,16 @@ func TestMemoryRetrieval(t *testing.T) {
 		RetrieveFn: getCountryMemory,
 	}
 
-	ai := agentpod.NewAgent("You are a helpful assistant. Answer questions based on the user's information.", []agentpod.Skill{})
+	populationTool := &PopulationTool{}
+
+	censusSkill := agentpod.Skill{
+		Name:         "CensusSkill",
+		Description:  "This skill can provide population data for different countries.",
+		SystemPrompt: "You are a census expert. You can provide population data.",
+		Tools:        []agentpod.Tool{populationTool},
+	}
+
+	ai := agentpod.NewAgent("You are a helpful assistant.", []agentpod.Skill{censusSkill})
 
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, agentpod.ContextKey("customerID"), GenerateNewTestID())
@@ -70,20 +127,22 @@ func TestMemoryRetrieval(t *testing.T) {
 
 	convSession := agentpod.NewSession(ctx, llm, mem, ai)
 
-	convSession.In("Which country am I from?")
+	convSession.In("What is the population of my country?")
 
-	var finalContent string
 	for {
 		out := convSession.Out()
-		if out.Type == agentpod.ResponseTypePartialText {
-			finalContent += out.Content
-		}
 		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
 	}
 
-	if !strings.Contains(strings.ToLower(finalContent), "united kingdom") {
-		t.Fatal("Expected response to contain 'United Kingdom', got:", finalContent)
+	populationTool.mu.Lock()
+	defer populationTool.mu.Unlock()
+	if !populationTool.WasCalled {
+		t.Fatal("Expected population tool to be called, but it was not.")
+	}
+
+	if strings.ToLower(populationTool.CountryArg) != "united kingdom" {
+		t.Fatalf("Expected population tool to be called with 'United Kingdom', but got '%s'", populationTool.CountryArg)
 	}
 }

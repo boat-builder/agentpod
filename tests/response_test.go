@@ -40,7 +40,7 @@ func TestNewResponseWithWebSearchTool(t *testing.T) {
 		},
 		Tools: []responses.ToolUnionParam{
 			{
-				OfWebSearch: &responses.WebSearchToolParam{
+				OfWebSearchPreview: &responses.WebSearchToolParam{
 					Type: responses.WebSearchToolTypeWebSearchPreview,
 				},
 			},

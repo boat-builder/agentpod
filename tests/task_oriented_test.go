@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -47,8 +48,10 @@ type GetOrderDetailsTool struct {
 	db *MockDB
 }
 
-func (t *GetOrderDetailsTool) Name() string        { return "GetOrderDetails" }
-func (t *GetOrderDetailsTool) Description() string { return "Gets the details of an order by its ID." }
+func (t *GetOrderDetailsTool) Name() string { return "GetOrderDetails" }
+func (t *GetOrderDetailsTool) Description() string {
+	return "Gets the details of an order by its ID and returns a JSON payload with the list of items (itemID and quantity)."
+}
 func (t *GetOrderDetailsTool) StatusMessage() string {
 	return "Getting order details..."
 }
@@ -74,14 +77,27 @@ func (t *GetOrderDetailsTool) OpenAI() []openai.ChatCompletionToolParam {
 }
 func (t *GetOrderDetailsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	t.db.addTrace(t.Name())
-	orderID := args["orderID"].(string)
+	orderID, _ := args["orderID"].(string)
 	t.db.mu.Lock()
 	defer t.db.mu.Unlock()
 	details, ok := t.db.orders[orderID]
 	if !ok {
 		return "", fmt.Errorf("order %s not found", orderID)
 	}
-	return fmt.Sprintf("Order %s contains: %v", orderID, details), nil
+	// Build a structured JSON payload so that downstream LLM calls can easily parse item IDs and quantities.
+	items := make([]map[string]interface{}, 0, len(details))
+	for id, qty := range details {
+		items = append(items, map[string]interface{}{"itemID": id, "quantity": qty})
+	}
+	payload := map[string]interface{}{
+		"orderID": orderID,
+		"items":   items,
+	}
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal order details: %w", err)
+	}
+	return string(jsonBytes), nil
 }
 
 type UpdateOrderStatusTool struct {
@@ -133,8 +149,10 @@ type CheckStockTool struct {
 	db *MockDB
 }
 
-func (t *CheckStockTool) Name() string        { return "CheckStock" }
-func (t *CheckStockTool) Description() string { return "Checks the stock level for a given item ID." }
+func (t *CheckStockTool) Name() string { return "CheckStock" }
+func (t *CheckStockTool) Description() string {
+	return "Checks the stock level for a given item ID. The itemID must exactly match one of the IDs provided in the order details JSON."
+}
 func (t *CheckStockTool) StatusMessage() string {
 	return "Checking stock..."
 }
@@ -174,8 +192,10 @@ type UpdateStockTool struct {
 	db *MockDB
 }
 
-func (t *UpdateStockTool) Name() string        { return "UpdateStock" }
-func (t *UpdateStockTool) Description() string { return "Updates the stock level for an item." }
+func (t *UpdateStockTool) Name() string { return "UpdateStock" }
+func (t *UpdateStockTool) Description() string {
+	return "Updates the stock level for an item. The itemID must exactly match one of the IDs provided in the order details JSON."
+}
 func (t *UpdateStockTool) StatusMessage() string {
 	return "Updating stock..."
 }
@@ -234,7 +254,7 @@ func TestECommerceOrderFulfillment(t *testing.T) {
 
 	orderSkill := agentpod.Skill{
 		Name:         "OrderManagementSkill",
-		Description:  "Manages customer orders, including retrieving details (such as order Id, item details etc) and updating status.",
+		Description:  "Manages customer orders, including retrieving order and item details and updating status.",
 		SystemPrompt: "You are an order management specialist.",
 		Tools: []agentpod.Tool{
 			&GetOrderDetailsTool{db: db},
@@ -244,15 +264,15 @@ func TestECommerceOrderFulfillment(t *testing.T) {
 
 	inventorySkill := agentpod.Skill{
 		Name:         "InventoryManagementSkill",
-		Description:  "Manages warehouse inventory, including checking and updating stock levels.",
-		SystemPrompt: "You are an inventory management specialist. You are dependent on the Item ID to do any operations on the inventory.",
+		Description:  "Manages warehouse inventory, including checking and updating stock levels. You are dependent on the Item ID to do any operations on the inventory",
+		SystemPrompt: "You are an inventory management specialist. You are dependent on the Item ID to do any operations on the inventory",
 		Tools: []agentpod.Tool{
 			&CheckStockTool{db: db},
 			&UpdateStockTool{db: db},
 		},
 	}
 
-	agent := agentpod.NewAgent("You are an e-commerce order fulfillment agent. Your goal is to process new orders by checking and updating inventory, and then updating the order status.", []agentpod.Skill{orderSkill, inventorySkill})
+	agent := agentpod.NewAgent("You are an e-commerce order fulfillment agent. Your goal is to process new orders by checking and updating inventory, and then updating the order status. All the information you need to perform the tasks are available from the tools you have. Do not ask any questions to the user. If you don't know what to do or done with the execution, call stop tool.", []agentpod.Skill{orderSkill, inventorySkill})
 
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, agentpod.ContextKey("customerID"), GenerateNewTestID())
@@ -265,8 +285,6 @@ func TestECommerceOrderFulfillment(t *testing.T) {
 	for {
 		out := convSession.Out()
 		switch out.Type {
-		case agentpod.ResponseTypePartialText:
-			finalContent += out.Content
 		case agentpod.ResponseTypeError:
 			t.Fatalf("Received an unexpected error: %s", out.Content)
 		case agentpod.ResponseTypeEnd:

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
+	"github.com/openai/openai-go"
 )
 
 // Session holds ephemeral conversation data & references to global resources.
@@ -85,7 +86,6 @@ func (s *Session) Close() {
 func (s *Session) run() {
 	s.logger.Info("Session started", "sessionID", s.ctx.Value(ContextKey("sessionID")))
 	defer s.Close()
-	storage := NewInMemoryStorage()
 	select {
 	case <-s.ctx.Done():
 		s.outUserChannel <- Response{Type: ResponseTypeEnd}
@@ -95,16 +95,12 @@ func (s *Session) run() {
 			s.outUserChannel <- Response{Type: ResponseTypeEnd}
 			return
 		}
-		err := storage.AddUserMessage(s.ctx, userMessage)
-		if err != nil {
-			s.logger.Error("Error creating conversation", "error", err)
-		}
 
 		// Prepare session message history and validate state
-		messageHistory, err := CompileConversationHistory(s.ctx, storage)
-		if err != nil {
-			s.logger.Error("Error compiling conversation history", "error", err)
-			return
+		messageHistory := &MessageList{
+			Messages: []openai.ChatCompletionMessageParamUnion{
+				UserMessage(userMessage),
+			},
 		}
 
 		memoryBlock, err := s.memory.Retrieve(s.ctx)
@@ -113,37 +109,19 @@ func (s *Session) run() {
 			return
 		}
 
-		// We use a two-channel approach to ensure proper message aggregation:
-		// 1. An internal channel receives all agent responses
-		// 2. These responses are processed sequentially in this goroutine
-		// 3. Messages are aggregated here before being sent to storage
-		// This prevents race conditions between aggregation and storage operations
 		internalChannel := make(chan Response)
-		var aggregatedResponse string
-		var hadError bool
-
 		go s.agent.Run(s.ctx, s.llm, messageHistory, memoryBlock, internalChannel)
 
 		for response := range internalChannel {
 			s.outUserChannel <- response
-			if response.Type == ResponseTypePartialText {
-				aggregatedResponse += response.Content
-			}
 			if response.Type == ResponseTypeError {
-				hadError = true
+				break
+			} else if response.Type == ResponseTypeEnd { // this case never happens as the channel gets closed before
 				break
 			}
 		}
 
-		// Finish the conversation in the store with the fully aggregated response
-		if !hadError {
-			err = storage.AddAssistantMessage(s.ctx, aggregatedResponse)
-			if err != nil {
-				s.logger.Error("Error finishing conversation", "error", err)
-			}
-		}
-
-		// Run method is done, send the final message
+		// Run method is done, send the end message
 		s.outUserChannel <- Response{
 			Type: ResponseTypeEnd,
 		}

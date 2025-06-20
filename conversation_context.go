@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/packages/param"
 )
 
 // GetMessageText extracts the plain text content from an OpenAI chat message
@@ -15,11 +16,11 @@ func GetMessageText(message openai.ChatCompletionMessageParamUnion) (string, err
 	case message.OfUser != nil:
 		m := message.OfUser
 		content := m.Content
-		if content.OfString.IsOmitted() && len(content.OfArrayOfContentParts) == 0 {
+		if param.IsOmitted(content.OfString) && len(content.OfArrayOfContentParts) == 0 {
 			return "", fmt.Errorf("user message content is empty")
 		}
-		if !content.OfString.IsOmitted() {
-			return content.OfString.String(), nil
+		if !param.IsOmitted(content.OfString) {
+			return content.OfString.Value, nil
 		}
 		var builder strings.Builder
 		for _, part := range content.OfArrayOfContentParts {
@@ -30,11 +31,11 @@ func GetMessageText(message openai.ChatCompletionMessageParamUnion) (string, err
 	case message.OfAssistant != nil:
 		m := message.OfAssistant
 		content := m.Content
-		if content.OfString.IsOmitted() && len(content.OfArrayOfContentParts) == 0 {
+		if param.IsOmitted(content.OfString) && len(content.OfArrayOfContentParts) == 0 {
 			return "", fmt.Errorf("assistant message content is empty")
 		}
-		if !content.OfString.IsOmitted() {
-			return content.OfString.String(), nil
+		if !param.IsOmitted(content.OfString) {
+			return content.OfString.Value, nil
 		}
 		var builder strings.Builder
 		for _, part := range content.OfArrayOfContentParts {
@@ -45,11 +46,11 @@ func GetMessageText(message openai.ChatCompletionMessageParamUnion) (string, err
 	case message.OfTool != nil:
 		m := message.OfTool
 		content := m.Content
-		if content.OfString.IsOmitted() && len(content.OfArrayOfContentParts) == 0 {
+		if param.IsOmitted(content.OfString) && len(content.OfArrayOfContentParts) == 0 {
 			return "", fmt.Errorf("tool message content is empty")
 		}
-		if !content.OfString.IsOmitted() {
-			return content.OfString.String(), nil
+		if !param.IsOmitted(content.OfString) {
+			return content.OfString.Value, nil
 		}
 		var builder strings.Builder
 		for _, part := range content.OfArrayOfContentParts {
@@ -60,11 +61,11 @@ func GetMessageText(message openai.ChatCompletionMessageParamUnion) (string, err
 	case message.OfDeveloper != nil:
 		m := message.OfDeveloper
 		content := m.Content
-		if content.OfString.IsOmitted() && len(content.OfArrayOfContentParts) == 0 {
+		if param.IsOmitted(content.OfString) && len(content.OfArrayOfContentParts) == 0 {
 			return "", fmt.Errorf("developer message content is empty")
 		}
-		if !content.OfString.IsOmitted() {
-			return content.OfString.String(), nil
+		if !param.IsOmitted(content.OfString) {
+			return content.OfString.Value, nil
 		}
 		var builder strings.Builder
 		for _, part := range content.OfArrayOfContentParts {

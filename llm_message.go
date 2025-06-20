@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/packages/param"
 )
 
 // TODO Remove all three and use openai functions directly
@@ -75,13 +76,13 @@ func (ml *MessageList) PrintMessages() {
 		switch {
 		case msg.OfUser != nil:
 			role = "user"
-			if !msg.OfUser.Content.OfString.IsOmitted() {
-				content = msg.OfUser.Content.OfString.String()
+			if !param.IsOmitted(msg.OfUser.Content.OfString) {
+				content = msg.OfUser.Content.OfString.Value
 			}
 		case msg.OfAssistant != nil:
 			role = "assistant"
-			if !msg.OfAssistant.Content.OfString.IsOmitted() {
-				content = msg.OfAssistant.Content.OfString.String()
+			if !param.IsOmitted(msg.OfAssistant.Content.OfString) {
+				content = msg.OfAssistant.Content.OfString.Value
 			}
 			// Print tool calls if they exist
 			if len(msg.OfAssistant.ToolCalls) > 0 {
@@ -93,13 +94,13 @@ func (ml *MessageList) PrintMessages() {
 			}
 		case msg.OfDeveloper != nil:
 			role = "developer"
-			if !msg.OfDeveloper.Content.OfString.IsOmitted() {
-				content = msg.OfDeveloper.Content.OfString.String()
+			if !param.IsOmitted(msg.OfDeveloper.Content.OfString) {
+				content = msg.OfDeveloper.Content.OfString.Value
 			}
 		case msg.OfTool != nil:
 			role = "tool"
-			if !msg.OfTool.Content.OfString.IsOmitted() {
-				content = msg.OfTool.Content.OfString.String()
+			if !param.IsOmitted(msg.OfTool.Content.OfString) {
+				content = msg.OfTool.Content.OfString.Value
 			}
 		}
 

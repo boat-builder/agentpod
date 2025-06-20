@@ -3,6 +3,7 @@ package agentpod
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/packages/param"
 )
+
+const maxAgentLoops = 25
 
 // Agent orchestrates calls to the LLM, uses Skills/Tools, and determines how to respond.
 type Agent struct {
@@ -61,14 +64,17 @@ func (a *Agent) StopTool() openai.ChatCompletionToolParam {
 		Function: openai.FunctionDefinitionParam{
 			Name: "stop",
 			Description: param.Opt[string]{
-				Value: `Request a stop after tool execution when one of the below is true
-1. You have answer for user request
-2. You have completed the task
-3. You don't know what to do next with the given tools or information`,
+				Value: `Call this tool when you are ready to finish the task or can't do anything more. Pass the final assistant reply for the user in the "response" argument.`,
 			},
 			Parameters: openai.FunctionParameters{
-				"type":       "object",
-				"properties": map[string]interface{}{},
+				"type": "object",
+				"properties": map[string]interface{}{
+					"response": map[string]interface{}{
+						"type":        "string",
+						"description": "The final response that should be shown to the user.",
+					},
+				},
+				"required": []string{"response"},
 			},
 		},
 	}
@@ -82,7 +88,16 @@ func (a *Agent) ConvertSkillsToTools() []openai.ChatCompletionToolParam {
 			Function: openai.FunctionDefinitionParam{
 				Name:        skill.Name,
 				Description: param.Opt[string]{Value: skill.Description},
-				Parameters:  openai.FunctionParameters{},
+				Parameters: openai.FunctionParameters{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"instruction": map[string]interface{}{
+							"type":        "string",
+							"description": "A detailed instruction on what to achieve",
+						},
+					},
+					"required": []string{"instruction"},
+				},
 			},
 		})
 	}
@@ -117,7 +132,7 @@ func (a *Agent) decideNextAction(ctx context.Context, llm LLM, clonedMessages *M
 	params := openai.ChatCompletionNewParams{
 		Messages:   clonedMessages.All(),
 		Model:      llm.CheapModel(),
-		ToolChoice: openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: param.Opt[string]{Value: "auto"}},
+		ToolChoice: openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: param.Opt[string]{Value: "required"}},
 		Tools:      tools,
 	}
 
@@ -193,7 +208,7 @@ func (a *Agent) Run(ctx context.Context, llm LLM, messageHistory *MessageList, m
 		close(outUserChannel)
 	}()
 
-	var hasStopTool bool
+	var hasStopToolCall bool
 
 	if len(a.skills) == 0 {
 		a.logger.Error("agent cannot run without skills")
@@ -204,14 +219,22 @@ func (a *Agent) Run(ctx context.Context, llm LLM, messageHistory *MessageList, m
 		return
 	}
 
-	for {
+	for i := 0; ; i++ {
+		if i >= maxAgentLoops {
+			a.logger.Error("agent has reached max loop count", "count", maxAgentLoops)
+			outUserChannel <- Response{
+				Content: "Agent has been running for too long and has been stopped.",
+				Type:    ResponseTypeError,
+			}
+			return
+		}
 		completion, err := a.decideNextAction(ctx, llm, messageHistory.Clone(), memoryBlock)
 		if err != nil {
 			a.handleLLMError(err, outUserChannel)
 			return
 		}
 
-		// If no tool calls were requested, we're done
+		// If no tool calls were requested, we're done - this doesn't happen as tool is "required"
 		if completion.Choices[0].Message.ToolCalls == nil {
 			break
 		}
@@ -220,7 +243,17 @@ func (a *Agent) Run(ctx context.Context, llm LLM, messageHistory *MessageList, m
 		skillToolCalls := []openai.ChatCompletionMessageToolCall{}
 		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
 			if toolCall.Function.Name == "stop" {
-				hasStopTool = true
+				hasStopToolCall = true
+
+				// Extract the response argument if present
+				if toolCall.Function.Arguments != "" {
+					var args map[string]interface{}
+					if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err == nil {
+						if resp, ok := args["response"].(string); ok {
+							a.logger.Info("Stop tool called with response. We don't respond this to the caller from here though", "response", resp)
+						}
+					}
+				}
 			} else {
 				skillToolCalls = append(skillToolCalls, toolCall)
 			}
@@ -239,19 +272,19 @@ func (a *Agent) Run(ctx context.Context, llm LLM, messageHistory *MessageList, m
 			}
 
 			wg.Add(1)
-			go func(skill *Skill, toolID string) {
+			go func(skill *Skill, tool openai.ChatCompletionMessageToolCall) {
 				defer wg.Done()
 				// Clone the messages again so all goroutines get different message history
-				result, err := a.SkillContextRunner(ctx, messageHistory.Clone(), llm, outUserChannel, memoryBlock, skill, tool.ID)
+				result, err := a.SkillContextRunner(ctx, messageHistory.Clone(), llm, memoryBlock, skill, tool)
 				if err != nil {
 					a.logger.Error("Error running skill", "error", err)
 					return
 				}
 
 				mu.Lock()
-				skillCallResults[toolID] = result
+				skillCallResults[tool.ID] = result
 				mu.Unlock()
-			}(skill, tool.ID)
+			}(skill, tool)
 		}
 
 		wg.Wait()
@@ -280,7 +313,7 @@ func (a *Agent) Run(ctx context.Context, llm LLM, messageHistory *MessageList, m
 		}
 
 		// If stop tool was called, break the loop
-		if hasStopTool {
+		if hasStopToolCall {
 			break
 		}
 	}
