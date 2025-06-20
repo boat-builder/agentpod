@@ -61,11 +61,11 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 }
 
 // summarizeMultipleToolResults summarizes results when multiple tools were called
-func (a *Agent) summarizeMultipleToolResults(ctx context.Context, clonedMessages *MessageList, llm *KeywordsAIClient) (string, error) {
+func (a *Agent) summarizeMultipleToolResults(ctx context.Context, clonedMessages *MessageList, llm LLM) (string, error) {
 	clonedMessages.AddFirst("Craft a helpful answer to user's question based on the tool call results. Be concise and to the point.")
 	params := openai.ChatCompletionNewParams{
 		Messages: clonedMessages.All(),
-		Model:    llm.GenerationModel,
+		Model:    llm.GetGenerationModel(),
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: param.Opt[bool]{Value: true},
 		},
@@ -131,7 +131,7 @@ func (a *Agent) ConvertSkillsToTools() []openai.ChatCompletionToolParam {
 }
 
 // decideNextAction gets the initial response from the LLM that decides whether to use skills or stop execution
-func (a *Agent) decideNextAction(ctx context.Context, llm *KeywordsAIClient, clonedMessages *MessageList, memoryBlock *MemoryBlock) (*openai.ChatCompletion, error) {
+func (a *Agent) decideNextAction(ctx context.Context, llm LLM, clonedMessages *MessageList, memoryBlock *MemoryBlock) (*openai.ChatCompletion, error) {
 	skillFunctions := make([]string, len(a.skills))
 	for i, skill := range a.skills {
 		skillFunctions[i] = skill.Name
@@ -157,7 +157,7 @@ func (a *Agent) decideNextAction(ctx context.Context, llm *KeywordsAIClient, clo
 	// TODO make it strict to call the tool when the openai sdk supports passing the option 'required'
 	params := openai.ChatCompletionNewParams{
 		Messages:   clonedMessages.All(),
-		Model:      llm.GenerationModel,
+		Model:      llm.GetGenerationModel(),
 		ToolChoice: openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: param.Opt[string]{Value: "auto"}},
 		Tools:      tools,
 	}
@@ -214,7 +214,7 @@ func (a *Agent) handleLLMError(err error, outUserChannel chan Response) {
 }
 
 // sendThoughtsAboutSkills generates "thinking" messages to keep the user engaged while skills are processing
-func (a *Agent) sendThoughtsAboutSkills(ctx context.Context, llm *KeywordsAIClient, messageHistory *MessageList, toolsToCall []openai.ChatCompletionMessageToolCall, outUserChannel chan Response) {
+func (a *Agent) sendThoughtsAboutSkills(ctx context.Context, llm LLM, messageHistory *MessageList, toolsToCall []openai.ChatCompletionMessageToolCall, outUserChannel chan Response) {
 	if len(toolsToCall) == 0 {
 		return
 	}
@@ -256,7 +256,7 @@ func (a *Agent) sendThoughtsAboutSkills(ctx context.Context, llm *KeywordsAIClie
 	messageHistory.AddFirst(allSpecSystemPrompt)
 	stream := llm.NewStreaming(ctx, openai.ChatCompletionNewParams{
 		Messages: messageHistory.All(),
-		Model:    llm.SmallGenerationModel,
+		Model:    llm.GetGenerationModel(),
 	})
 	defer stream.Close()
 
@@ -273,7 +273,7 @@ func (a *Agent) sendThoughtsAboutSkills(ctx context.Context, llm *KeywordsAIClie
 }
 
 // sendThoughtsAboutSkills generates "thinking" messages to keep the user engaged while skills are processing
-func (a *Agent) sendThoughtsAboutTools(ctx context.Context, llm *KeywordsAIClient, messageHistory *MessageList, toolsToCall []openai.ChatCompletionMessageToolCall, outUserChannel chan Response) {
+func (a *Agent) sendThoughtsAboutTools(ctx context.Context, llm LLM, messageHistory *MessageList, toolsToCall []openai.ChatCompletionMessageToolCall, outUserChannel chan Response) {
 	if len(toolsToCall) == 0 {
 		return
 	}
@@ -310,7 +310,7 @@ func (a *Agent) sendThoughtsAboutTools(ctx context.Context, llm *KeywordsAIClien
 
 	stream := llm.NewStreaming(ctx, openai.ChatCompletionNewParams{
 		Messages: messageHistory.All(),
-		Model:    llm.SmallGenerationModel,
+		Model:    llm.GetGenerationModel(),
 	})
 	defer stream.Close()
 
@@ -327,7 +327,7 @@ func (a *Agent) sendThoughtsAboutTools(ctx context.Context, llm *KeywordsAIClien
 }
 
 // runWithoutSkills handles the case when no skills are available by directly calling the LLM
-func (a *Agent) runWithoutSkills(ctx context.Context, llm *KeywordsAIClient, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response) {
+func (a *Agent) runWithoutSkills(ctx context.Context, llm LLM, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response) {
 	// Create a system prompt using the NoSkillsPrompt function
 	systemPromptData := prompts.NoSkillsPromptData{
 		MainAgentSystemPrompt: a.prompt,
@@ -346,7 +346,7 @@ func (a *Agent) runWithoutSkills(ctx context.Context, llm *KeywordsAIClient, mes
 
 	params := openai.ChatCompletionNewParams{
 		Messages: clonedMessages.All(),
-		Model:    llm.GenerationModel,
+		Model:    llm.GetGenerationModel(),
 	}
 
 	completion, err := llm.New(ctx, params)
@@ -369,7 +369,7 @@ func (a *Agent) runWithoutSkills(ctx context.Context, llm *KeywordsAIClient, mes
 
 // Run processes a user message through the LLM, executes any requested skills. It returns only after the agent is done.
 // The intermediary messages are sent to the outUserChannel.
-func (a *Agent) Run(ctx context.Context, meta Meta, llm *KeywordsAIClient, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response, isConversational bool) {
+func (a *Agent) Run(ctx context.Context, llm LLM, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response) {
 	if a.logger == nil {
 		panic("logger is not set")
 	}
@@ -437,11 +437,6 @@ func (a *Agent) Run(ctx context.Context, meta Meta, llm *KeywordsAIClient, messa
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 
-		if isConversational {
-			// sending fake thoughts to the user to keep the user engaged
-			go a.sendThoughtsAboutSkills(ctx, llm, messageHistory.Clone(), skillToolCalls, outUserChannel)
-		}
-
 		for _, tool := range skillToolCalls {
 			skill, err := a.GetSkill(tool.Function.Name)
 			if err != nil {
@@ -453,7 +448,7 @@ func (a *Agent) Run(ctx context.Context, meta Meta, llm *KeywordsAIClient, messa
 			go func(skill *Skill, toolID string) {
 				defer wg.Done()
 				// Clone the messages again so all goroutines get different message history
-				result, err := a.SkillContextRunner(ctx, meta, messageHistory.Clone(), llm, outUserChannel, memoryBlock, skill, tool.ID, isConversational)
+				result, err := a.SkillContextRunner(ctx, messageHistory.Clone(), llm, outUserChannel, memoryBlock, skill, tool.ID)
 				if err != nil {
 					a.logger.Error("Error running skill", "error", err)
 					return
@@ -502,15 +497,16 @@ func (a *Agent) Run(ctx context.Context, meta Meta, llm *KeywordsAIClient, messa
 		}
 	}
 
-	// if not conversational, rest of the code is not needed as that is for sending the final message to the user
-	if !isConversational {
-		return
-	}
-
 	// Handle final results based on the callSummarizer parameter from the stop tool or if multiple skills were called
 	if callSummarizer || len(finalSkillCallResults) > 1 {
-		// If callSummarizer is true, summarize the results
-		summary, err := a.summarizeMultipleToolResults(ctx, messageHistory.Clone(), llm)
+		a.logger.Info("Calling summarizer", "callSummarizer", callSummarizer, "finalSkillCallResults", len(finalSkillCallResults))
+		// We need to summarize
+		// Create a new message list for summarization
+		summaryMessageList := messageHistory.Clone()
+		summaryMessageList.AddFirst("Craft a helpful answer to user's question based on the tool call results. Be concise and to the point.")
+		summaryMessageList.Add(openai.ChatCompletionMessageParamUnion{OfTool: finalSkillCallResults[""]})
+
+		summary, err := a.summarizeMultipleToolResults(ctx, summaryMessageList, llm)
 		if err != nil {
 			a.handleLLMError(err, outUserChannel)
 			return
@@ -519,7 +515,6 @@ func (a *Agent) Run(ctx context.Context, meta Meta, llm *KeywordsAIClient, messa
 			Content: summary,
 			Type:    ResponseTypePartialText,
 		}
-		return
 	} else if len(finalSkillCallResults) == 1 {
 		// If callSummarizer is false, return the final skill result directly
 		// Get the last skill result
@@ -544,7 +539,6 @@ func (a *Agent) Run(ctx context.Context, meta Meta, llm *KeywordsAIClient, messa
 			Content: contentString,
 			Type:    ResponseTypePartialText,
 		}
-		return
 	} else {
 		// If there are no skill results, we return an error
 		a.logger.Warn("No skill results available to return")

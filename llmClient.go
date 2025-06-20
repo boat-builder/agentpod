@@ -108,6 +108,22 @@ func (c *KeywordsAIClient) NewResponse(ctx context.Context, params responses.Res
 	return c.client.Responses.New(ctx, params, opts...)
 }
 
+func (c *KeywordsAIClient) GetGenerationModel() string {
+	return c.GenerationModel
+}
+
+func (c *KeywordsAIClient) GetReasoningModel() string {
+	return c.ReasoningModel
+}
+
+func (c *KeywordsAIClient) GetSmallGenerationModel() string {
+	return c.SmallGenerationModel
+}
+
+func (c *KeywordsAIClient) GetSmallReasoningModel() string {
+	return c.SmallReasoningModel
+}
+
 func GenerateSchema[T any]() interface{} {
 	reflector := jsonschema.Reflector{
 		AllowAdditionalProperties: false,

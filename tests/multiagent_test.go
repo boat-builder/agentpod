@@ -84,7 +84,7 @@ func (r *RestaurantTool) OpenAI() []openai.ChatCompletionToolParam {
 	}
 }
 
-func (r *RestaurantTool) Execute(ctx context.Context, meta agentpod.Meta, args map[string]interface{}) (string, error) {
+func (r *RestaurantTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	location := args["location"].(string)
 	cuisine := args["cuisine"].(string)
 
@@ -148,7 +148,7 @@ func (c *CuisineTool) OpenAI() []openai.ChatCompletionToolParam {
 	}
 }
 
-func (c *CuisineTool) Execute(ctx context.Context, meta agentpod.Meta, args map[string]interface{}) (string, error) {
+func (c *CuisineTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	restaurant := args["restaurant"].(string)
 	if dishes, ok := c.dishes[restaurant]; ok {
 		return strings.Join(dishes, ", "), nil
@@ -157,7 +157,7 @@ func (c *CuisineTool) Execute(ctx context.Context, meta agentpod.Meta, args map[
 }
 
 // Function to create memory with user preferences
-func getUserPreferencesMemory(meta *agentpod.Meta) (*agentpod.MemoryBlock, error) {
+func getUserPreferencesMemory(ctx context.Context) (*agentpod.MemoryBlock, error) {
 	memoryBlock := agentpod.NewMemoryBlock()
 	userDetailsBlock := agentpod.NewMemoryBlock()
 	userDetailsBlock.AddString("location", "Downtown")
@@ -216,20 +216,12 @@ func testRestaurantRecommendation(t *testing.T, prompt string) {
 		},
 	)
 
-	// Create a mock storage with empty conversation history
-	storage := &MockStorage{}
-	storage.ConversationFn = getEmptyConversationHistory(storage)
-
-	orgID := GenerateNewTestID()
-	sessionID := GenerateNewTestID()
-	userID := GenerateNewTestID()
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, agentpod.ContextKey("customerID"), GenerateNewTestID())
+	ctx = context.WithValue(ctx, agentpod.ContextKey("extra"), map[string]string{"user_id": GenerateNewTestID(), "domain": "test"})
 
 	// Create session with restaurant agent
-	restaurantSession := agentpod.NewSession(context.Background(), llm, mem, restaurantAgent, storage, agentpod.Meta{
-		CustomerID: orgID,
-		SessionID:  sessionID,
-		Extra:      map[string]string{"user_id": userID, "domain": "test"},
-	})
+	restaurantSession := agentpod.NewSession(ctx, llm, mem, restaurantAgent)
 
 	restaurantSession.In(prompt)
 	var response string
@@ -249,9 +241,9 @@ func testRestaurantRecommendation(t *testing.T, prompt string) {
 	}
 
 	// Verify cuisine recommendation
-	expectedDishes := []string{"carbonara", "lasagna", "risotto"}
+	dishes := []string{"carbonara", "lasagna", "risotto"}
 	foundDish := false
-	for _, dish := range expectedDishes {
+	for _, dish := range dishes {
 		if strings.Contains(strings.ToLower(response), dish) {
 			foundDish = true
 			break
@@ -260,22 +252,12 @@ func testRestaurantRecommendation(t *testing.T, prompt string) {
 	if !foundDish {
 		t.Fatal("Expected at least one of the dishes to be in the cuisine recommendation, got:", response)
 	}
-
-	// Verify CreateConversation was called with the correct messages
-	if !storage.WasCreateConversationCalled() {
-		t.Fatal("Expected CreateConversation to be called")
-	}
-	if storage.GetUserMessage(sessionID) != prompt {
-		t.Fatalf("Expected user message to match, got: %s", storage.GetUserMessage(sessionID))
-	}
 }
 
 func TestMultiAgentRestaurantRecommendationWithSummarizer(t *testing.T) {
-	prompt := "What's a good restaurant for me? and what dishes do they have. Make sure to call summarizer to properly summarize the response."
-	testRestaurantRecommendation(t, prompt)
+	testRestaurantRecommendation(t, "Can you recommend a good restaurant for me?")
 }
 
 func TestMultiAgentRestaurantRecommendationWithoutSummarizer(t *testing.T) {
-	prompt := "What's a good restaurant for me? and what dishes do they have? Do not call summarizer. Return the final response as it is."
-	testRestaurantRecommendation(t, prompt)
+	testRestaurantRecommendation(t, "I am looking for an Italian restaurant in Downtown. Can you suggest one? After that, can you recommend me some dishes there?")
 }

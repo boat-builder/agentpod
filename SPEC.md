@@ -14,7 +14,6 @@ agent := agentpod.NewAgent(AgentMainPrompt, []agentpod.Skill{
     skills.KeywordResearchSkill(keywordsPlace),
 })
 memory := agentpod.NewMem0()
-storage := agentpod.NewPostgresql()
 llm := agentpod.NewLLM(
     cfg.AI.KeywordsAIAPIKey, 
     cfg.AI.KeywordsAIBaseURL,
@@ -30,7 +29,7 @@ meta := agentpod.Meta{
     Extra: map[string]string{"user_id": userID},
 }
 
-session := agentpod.NewSession(ctx, llm, memory, agent, storage, meta)
+session := agentpod.NewSession(ctx, llm, memory, agent, meta)
 session.In("Hey there")
 msg := session.Out()
 ```

@@ -1,6 +1,7 @@
 package agentpod
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -78,6 +79,6 @@ func GetMessageText(message openai.ChatCompletionMessageParamUnion) (string, err
 
 // CompileConversationHistory builds the message history for the LLM request
 // now it fetches the last 5 messages but in the future, we'lll do smart things here like old message summarization etc
-func CompileConversationHistory(meta Meta, storage Storage) (*MessageList, error) {
-	return storage.GetConversations(meta, 5, 0)
+func CompileConversationHistory(ctx context.Context, storage Storage) (*MessageList, error) {
+	return storage.GetConversations(ctx, 5, 0)
 }

@@ -18,4 +18,9 @@ type LLM interface {
 	// NewStreaming issues a streaming chat completion request, returning
 	// an ssestream.Stream to consume the chunks.
 	NewStreaming(ctx context.Context, params openai.ChatCompletionNewParams) *ssestream.Stream[openai.ChatCompletionChunk]
+
+	GetGenerationModel() string
+	GetReasoningModel() string
+	GetSmallGenerationModel() string
+	GetSmallReasoningModel() string
 }

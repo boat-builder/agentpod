@@ -2,6 +2,7 @@
 package agentpod
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -143,5 +144,5 @@ func (mb *MemoryBlock) parseWithIndent(level int, tagName string) string {
 
 // Memory is an interface for reading/writing conversation data or other context.
 type Memory interface {
-	Retrieve(meta *Meta) (*MemoryBlock, error)
+	Retrieve(ctx context.Context) (*MemoryBlock, error)
 }
