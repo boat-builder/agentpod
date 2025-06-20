@@ -23,7 +23,7 @@ type Session struct {
 	inUserChannel  chan string
 	outUserChannel chan Response
 
-	llm     *LLM
+	llm     *KeywordsAIClient
 	memory  Memory
 	agent   *Agent
 	storage Storage
@@ -35,7 +35,7 @@ type Session struct {
 }
 
 // NewSession constructs a session with references to shared LLM & memory, but isolated state.
-func NewSession(ctx context.Context, llm *LLM, mem Memory, ag *Agent, storage Storage, meta Meta) *Session {
+func NewSession(ctx context.Context, llm *KeywordsAIClient, mem Memory, ag *Agent, storage Storage, meta Meta) *Session {
 	ctx, cancel := context.WithCancel(ctx)
 	ctx = context.WithValue(ctx, ContextKey("customerID"), meta.CustomerID)
 	ctx = context.WithValue(ctx, ContextKey("sessionID"), meta.SessionID)

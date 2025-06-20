@@ -15,7 +15,7 @@ import (
 // Define a custom type for context keys
 type ContextKey string
 
-type LLM struct {
+type KeywordsAIClient struct {
 	APIKey               string
 	BaseURL              string
 	ReasoningModel       string
@@ -25,14 +25,14 @@ type LLM struct {
 	client               openai.Client
 }
 
-func NewLLM(apiKey string, baseURL string, reasoningModel string, generationModel string, smallReasoningModel string, smallGenerationModel string) *LLM {
+func NewKeywordsAIClient(apiKey string, baseURL string, reasoningModel string, generationModel string, smallReasoningModel string, smallGenerationModel string) *KeywordsAIClient {
 	var client openai.Client
 	if baseURL != "" {
 		client = openai.NewClient(option.WithBaseURL(baseURL), option.WithAPIKey(apiKey))
 	} else {
 		client = openai.NewClient(option.WithAPIKey(apiKey))
 	}
-	return &LLM{
+	return &KeywordsAIClient{
 		APIKey:               apiKey,
 		BaseURL:              baseURL,
 		ReasoningModel:       reasoningModel,
@@ -89,20 +89,20 @@ func optsWithIds(ctx context.Context, opts []option.RequestOption, useHeader boo
 }
 
 // TODO failures like too long, non-processable etc from the LLM needs to be handled
-func (c *LLM) New(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+func (c *KeywordsAIClient) New(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	opts := []option.RequestOption{}
 	opts = optsWithIds(ctx, opts, false)
 	return c.client.Chat.Completions.New(ctx, params, opts...)
 }
 
-func (c *LLM) NewStreaming(ctx context.Context, params openai.ChatCompletionNewParams) *ssestream.Stream[openai.ChatCompletionChunk] {
+func (c *KeywordsAIClient) NewStreaming(ctx context.Context, params openai.ChatCompletionNewParams) *ssestream.Stream[openai.ChatCompletionChunk] {
 	opts := []option.RequestOption{}
 	opts = optsWithIds(ctx, opts, false)
 	return c.client.Chat.Completions.NewStreaming(ctx, params, opts...)
 }
 
 // NewResponse creates a new response using OpenAI's Response API
-func (c *LLM) NewResponse(ctx context.Context, params responses.ResponseNewParams) (*responses.Response, error) {
+func (c *KeywordsAIClient) NewResponse(ctx context.Context, params responses.ResponseNewParams) (*responses.Response, error) {
 	opts := []option.RequestOption{}
 	opts = optsWithIds(ctx, opts, true)
 	return c.client.Responses.New(ctx, params, opts...)
@@ -116,4 +116,13 @@ func GenerateSchema[T any]() interface{} {
 	var v T
 	schema := reflector.Reflect(v)
 	return schema
+}
+
+// Ensure KeywordsAIClient satisfies the LLM interface.
+var _ LLM = (*KeywordsAIClient)(nil)
+
+// NewLLM is a convenience wrapper maintained to avoid widespread signature
+// changes across the codebase. It simply delegates to NewKeywordsAIClient.
+func NewLLM(apiKey string, baseURL string, reasoningModel string, generationModel string, smallReasoningModel string, smallGenerationModel string) *KeywordsAIClient {
+	return NewKeywordsAIClient(apiKey, baseURL, reasoningModel, generationModel, smallReasoningModel, smallGenerationModel)
 }

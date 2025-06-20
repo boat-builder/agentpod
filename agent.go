@@ -61,7 +61,7 @@ func (a *Agent) GetSkill(name string) (*Skill, error) {
 }
 
 // summarizeMultipleToolResults summarizes results when multiple tools were called
-func (a *Agent) summarizeMultipleToolResults(ctx context.Context, clonedMessages *MessageList, llm *LLM) (string, error) {
+func (a *Agent) summarizeMultipleToolResults(ctx context.Context, clonedMessages *MessageList, llm *KeywordsAIClient) (string, error) {
 	clonedMessages.AddFirst("Craft a helpful answer to user's question based on the tool call results. Be concise and to the point.")
 	params := openai.ChatCompletionNewParams{
 		Messages: clonedMessages.All(),
@@ -131,7 +131,7 @@ func (a *Agent) ConvertSkillsToTools() []openai.ChatCompletionToolParam {
 }
 
 // decideNextAction gets the initial response from the LLM that decides whether to use skills or stop execution
-func (a *Agent) decideNextAction(ctx context.Context, llm *LLM, clonedMessages *MessageList, memoryBlock *MemoryBlock) (*openai.ChatCompletion, error) {
+func (a *Agent) decideNextAction(ctx context.Context, llm *KeywordsAIClient, clonedMessages *MessageList, memoryBlock *MemoryBlock) (*openai.ChatCompletion, error) {
 	skillFunctions := make([]string, len(a.skills))
 	for i, skill := range a.skills {
 		skillFunctions[i] = skill.Name
@@ -214,7 +214,7 @@ func (a *Agent) handleLLMError(err error, outUserChannel chan Response) {
 }
 
 // sendThoughtsAboutSkills generates "thinking" messages to keep the user engaged while skills are processing
-func (a *Agent) sendThoughtsAboutSkills(ctx context.Context, llm *LLM, messageHistory *MessageList, toolsToCall []openai.ChatCompletionMessageToolCall, outUserChannel chan Response) {
+func (a *Agent) sendThoughtsAboutSkills(ctx context.Context, llm *KeywordsAIClient, messageHistory *MessageList, toolsToCall []openai.ChatCompletionMessageToolCall, outUserChannel chan Response) {
 	if len(toolsToCall) == 0 {
 		return
 	}
@@ -273,7 +273,7 @@ func (a *Agent) sendThoughtsAboutSkills(ctx context.Context, llm *LLM, messageHi
 }
 
 // sendThoughtsAboutSkills generates "thinking" messages to keep the user engaged while skills are processing
-func (a *Agent) sendThoughtsAboutTools(ctx context.Context, llm *LLM, messageHistory *MessageList, toolsToCall []openai.ChatCompletionMessageToolCall, outUserChannel chan Response) {
+func (a *Agent) sendThoughtsAboutTools(ctx context.Context, llm *KeywordsAIClient, messageHistory *MessageList, toolsToCall []openai.ChatCompletionMessageToolCall, outUserChannel chan Response) {
 	if len(toolsToCall) == 0 {
 		return
 	}
@@ -327,7 +327,7 @@ func (a *Agent) sendThoughtsAboutTools(ctx context.Context, llm *LLM, messageHis
 }
 
 // runWithoutSkills handles the case when no skills are available by directly calling the LLM
-func (a *Agent) runWithoutSkills(ctx context.Context, llm *LLM, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response) {
+func (a *Agent) runWithoutSkills(ctx context.Context, llm *KeywordsAIClient, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response) {
 	// Create a system prompt using the NoSkillsPrompt function
 	systemPromptData := prompts.NoSkillsPromptData{
 		MainAgentSystemPrompt: a.prompt,
@@ -369,7 +369,7 @@ func (a *Agent) runWithoutSkills(ctx context.Context, llm *LLM, messageHistory *
 
 // Run processes a user message through the LLM, executes any requested skills. It returns only after the agent is done.
 // The intermediary messages are sent to the outUserChannel.
-func (a *Agent) Run(ctx context.Context, meta Meta, llm *LLM, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response, isConversational bool) {
+func (a *Agent) Run(ctx context.Context, meta Meta, llm *KeywordsAIClient, messageHistory *MessageList, memoryBlock *MemoryBlock, outUserChannel chan Response, isConversational bool) {
 	if a.logger == nil {
 		panic("logger is not set")
 	}
