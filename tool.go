@@ -10,8 +10,7 @@ import (
 
 type Tool interface {
 	Name() string
-	StatusMessage() string // not using now - but we will - soon
 	Description() string
 	OpenAI() []openai.ChatCompletionToolParam
-	Execute(ctx context.Context, meta Meta, args map[string]interface{}) (string, error)
+	Execute(ctx context.Context, args map[string]interface{}) (string, error)
 }

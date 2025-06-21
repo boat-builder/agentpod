@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/packages/param"
 )
 
 // TODO Remove all three and use openai functions directly
@@ -40,8 +41,13 @@ func (ml *MessageList) Add(msgs ...openai.ChatCompletionMessageParamUnion) {
 	ml.Messages = append(ml.Messages, msgs...)
 }
 
-func (ml *MessageList) AddFirst(prompt string) {
-	ml.Messages = append([]openai.ChatCompletionMessageParamUnion{DeveloperMessage(prompt)}, ml.Messages...)
+// AddFirstDeveloperMessage prepends a developer message to the message list.
+// It panics if the provided message is not a developer message.
+func (ml *MessageList) AddFirstDeveloperMessage(msg openai.ChatCompletionMessageParamUnion) {
+	if msg.OfDeveloper == nil {
+		panic("AddFirstDeveloperMessage expects a DeveloperMessage")
+	}
+	ml.Messages = append([]openai.ChatCompletionMessageParamUnion{msg}, ml.Messages...)
 }
 
 func (ml *MessageList) ReplaceAt(index int, newMsg openai.ChatCompletionMessageParamUnion) error {
@@ -56,10 +62,18 @@ func (ml *MessageList) All() []openai.ChatCompletionMessageParamUnion {
 	return ml.Messages
 }
 
-func (ml *MessageList) Clone() *MessageList {
-	return &MessageList{
-		Messages: append([]openai.ChatCompletionMessageParamUnion{}, ml.Messages...),
+// CloneWithoutDeveloperMessages returns a copy of the MessageList that
+// excludes any developer or system messages, preserving the original order of
+// the remaining messages. This is useful when sending conversation history
+// back to the LLM, where developer/system prompts should not be repeated.
+func (ml *MessageList) CloneWithoutDeveloperMessages() *MessageList {
+	filtered := make([]openai.ChatCompletionMessageParamUnion, 0, len(ml.Messages))
+	for _, msg := range ml.Messages {
+		if msg.OfDeveloper == nil && msg.OfSystem == nil {
+			filtered = append(filtered, msg)
+		}
 	}
+	return &MessageList{Messages: filtered}
 }
 
 func (ml *MessageList) Clear() {
@@ -75,13 +89,13 @@ func (ml *MessageList) PrintMessages() {
 		switch {
 		case msg.OfUser != nil:
 			role = "user"
-			if !msg.OfUser.Content.OfString.IsOmitted() {
-				content = msg.OfUser.Content.OfString.String()
+			if !param.IsOmitted(msg.OfUser.Content.OfString) {
+				content = msg.OfUser.Content.OfString.Value
 			}
 		case msg.OfAssistant != nil:
 			role = "assistant"
-			if !msg.OfAssistant.Content.OfString.IsOmitted() {
-				content = msg.OfAssistant.Content.OfString.String()
+			if !param.IsOmitted(msg.OfAssistant.Content.OfString) {
+				content = msg.OfAssistant.Content.OfString.Value
 			}
 			// Print tool calls if they exist
 			if len(msg.OfAssistant.ToolCalls) > 0 {
@@ -93,13 +107,13 @@ func (ml *MessageList) PrintMessages() {
 			}
 		case msg.OfDeveloper != nil:
 			role = "developer"
-			if !msg.OfDeveloper.Content.OfString.IsOmitted() {
-				content = msg.OfDeveloper.Content.OfString.String()
+			if !param.IsOmitted(msg.OfDeveloper.Content.OfString) {
+				content = msg.OfDeveloper.Content.OfString.Value
 			}
 		case msg.OfTool != nil:
 			role = "tool"
-			if !msg.OfTool.Content.OfString.IsOmitted() {
-				content = msg.OfTool.Content.OfString.String()
+			if !param.IsOmitted(msg.OfTool.Content.OfString) {
+				content = msg.OfTool.Content.OfString.Value
 			}
 		}
 
