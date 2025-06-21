@@ -22,32 +22,33 @@ func MessageWhenToolErrorWithRetry(errorString string, toolCallID string) openai
 }
 
 func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageList, llm LLM, memoryBlock *MemoryBlock, skill *Skill, skillToolCall openai.ChatCompletionMessageToolCall) (*openai.ChatCompletionToolMessageParam, error) {
-	a.logger.Info("Running skill", "skill", skill.Name)
-
 	promptData := prompts.SkillContextRunnerPromptData{
-		MainAgentSystemPrompt: a.prompt,
-		SkillSystemPrompt:     skill.SystemPrompt,
-		MemoryBlocks:          memoryBlock.Parse(),
+		SkillSystemPrompt: skill.SystemPrompt,
+		MemoryBlocks:      memoryBlock.Parse(),
 	}
 	systemPrompt, err := prompts.SkillContextRunnerPrompt(promptData)
 	if err != nil {
 		a.logger.Error("Error getting system prompt", "error", err)
 		return nil, err
 	}
-	messageHistory.AddFirst(systemPrompt)
+	messageHistory.AddFirstDeveloperMessage(DeveloperMessage(systemPrompt))
 
 	// Extract the "instruction" argument from the tool call and append it as a user message so that the LLM
 	// inside the skill context clearly understands the task it needs to perform.
+	instruction := ""
 	if skillToolCall.Function.Arguments != "" {
 		var toolArgs map[string]interface{}
 		if err := json.Unmarshal([]byte(skillToolCall.Function.Arguments), &toolArgs); err == nil {
 			if instr, ok := toolArgs["instruction"].(string); ok && instr != "" {
+				instruction = instr
 				messageHistory.Add(UserMessage(instr))
 			}
 		} else {
 			a.logger.Error("Error unmarshalling instruction from tool call arguments", "error", err)
 		}
 	}
+
+	a.logger.Info("Running skill", "skill", skill.Name, "instruction", instruction)
 
 	var (
 		hasStopToolCall  bool
@@ -59,6 +60,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 			a.logger.Error("skill has reached max loop count", "skill", skill.Name, "count", maxSkillLoops)
 			return openai.ToolMessage("Error: The skill exceeded maximum allowed iterations and was stopped.", skillToolCall.ID).OfTool, fmt.Errorf("skill %s exceeded max loop iterations", skill.Name)
 		}
+		a.logger.Info("Running skill loop", "skill", skill.Name, "loop", i)
 
 		// Build the list of tools exposed to the skill-level LLM. Always include the
 		// stop tool so that the model can explicitly finish execution when needed.
@@ -93,6 +95,7 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 						var args map[string]interface{}
 						if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil {
 							if resp, ok := args["response"].(string); ok {
+								a.logger.Info("Stop tool called with response. ", "response", resp)
 								stopToolResponse = resp
 							}
 						}
@@ -137,7 +140,8 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 				tool, err := skill.GetTool(toolCall.Function.Name)
 				if err != nil {
 					a.logger.Error("Error getting tool", "error", err)
-					resultsChan <- nil
+					// Send an error message associated with this tool call so the LLM can handle it
+					resultsChan <- MessageWhenToolError(toolCall.ID).OfTool
 					return
 				}
 
@@ -145,14 +149,15 @@ func (a *Agent) SkillContextRunner(ctx context.Context, messageHistory *MessageL
 				err = json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments)
 				if err != nil {
 					a.logger.Error("Error unmarshalling tool arguments", "error", err)
-					resultsChan <- nil
+					resultsChan <- MessageWhenToolError(toolCall.ID).OfTool
 					return
 				}
 
 				output, err := tool.Execute(ctx, arguments)
 				if err != nil {
 					a.logger.Error("Error executing tool", "error", err)
-					resultsChan <- nil
+					// Relay the execution error back so the model is aware
+					resultsChan <- MessageWhenToolErrorWithRetry(err.Error(), toolCall.ID).OfTool
 					return
 				}
 

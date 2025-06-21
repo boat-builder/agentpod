@@ -113,10 +113,10 @@ func TestSkillWithMemory(t *testing.T) {
 	populationTool := &PopulationTool{}
 
 	censusSkill := agentpod.Skill{
-		Name:         "CensusSkill",
-		Description:  "This skill can provide population data for different countries.",
-		SystemPrompt: "You are a census expert. You can provide population data.",
-		Tools:        []agentpod.Tool{populationTool},
+		Name:            "CensusSkill",
+		ToolDescription: "This skill can provide population data for different countries.",
+		SystemPrompt:    "You are a census expert. You can provide population data.",
+		Tools:           []agentpod.Tool{populationTool},
 	}
 
 	ai := agentpod.NewAgent("You are a helpful assistant.", []agentpod.Skill{censusSkill})

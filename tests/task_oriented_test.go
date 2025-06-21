@@ -16,21 +16,54 @@ import (
 // MockDB simulates a database for orders and inventory, and tracks tool execution.
 type MockDB struct {
 	mu          sync.Mutex
-	orders      map[string]map[string]int
+	orders      map[string]Order
 	orderStatus map[string]string
-	inventory   map[string]int
+	inventory   map[string]*InventoryItem
 	trace       []string
+}
+
+// Define richer data models for orders and inventory
+// These models provide explicit IDs, names, and counts so that LLM tooling
+// can reference both identifiers and human-readable names.
+//
+// An individual item that belongs to an order.
+// It contains both the machine ID and a human-friendly name.
+//
+// JSON tags use camelCase to align with typical API payload formats.
+type OrderItem struct {
+	ItemID   string `json:"itemId"`
+	ItemName string `json:"itemName"`
+	Quantity int    `json:"quantity"`
+}
+
+// A customer order, identified by its orderId and a set of items.
+type Order struct {
+	OrderID string      `json:"orderId"`
+	Items   []OrderItem `json:"items"`
+}
+
+// An item stored in the warehouse inventory.
+type InventoryItem struct {
+	ItemID     string `json:"itemId"`
+	ItemName   string `json:"itemName"`
+	StoreCount int    `json:"storeCount"`
 }
 
 func NewMockDB() *MockDB {
 	return &MockDB{
-		orders: map[string]map[string]int{
-			"order-123": {"item-abc": 2, "item-def": 1},
+		orders: map[string]Order{
+			"order-123": {
+				OrderID: "order-123",
+				Items: []OrderItem{
+					{ItemID: "item-abc", ItemName: "item-abc", Quantity: 2},
+					{ItemID: "item-def", ItemName: "item-def", Quantity: 1},
+				},
+			},
 		},
 		orderStatus: make(map[string]string),
-		inventory: map[string]int{
-			"item-abc": 10,
-			"item-def": 5,
+		inventory: map[string]*InventoryItem{
+			"item-abc": {ItemID: "item-abc", ItemName: "item-abc", StoreCount: 10},
+			"item-def": {ItemID: "item-def", ItemName: "item-def", StoreCount: 5},
 		},
 		trace: []string{},
 	}
@@ -80,20 +113,13 @@ func (t *GetOrderDetailsTool) Execute(ctx context.Context, args map[string]inter
 	orderID, _ := args["orderID"].(string)
 	t.db.mu.Lock()
 	defer t.db.mu.Unlock()
-	details, ok := t.db.orders[orderID]
+	order, ok := t.db.orders[orderID]
 	if !ok {
 		return "", fmt.Errorf("order %s not found", orderID)
 	}
-	// Build a structured JSON payload so that downstream LLM calls can easily parse item IDs and quantities.
-	items := make([]map[string]interface{}, 0, len(details))
-	for id, qty := range details {
-		items = append(items, map[string]interface{}{"itemID": id, "quantity": qty})
-	}
-	payload := map[string]interface{}{
-		"orderID": orderID,
-		"items":   items,
-	}
-	jsonBytes, err := json.Marshal(payload)
+	// Marshal the full order (including item IDs, names, and quantities) so that the LLM
+	// can reference either identifier or display name.
+	jsonBytes, err := json.Marshal(order)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal order details: %w", err)
 	}
@@ -106,7 +132,7 @@ type UpdateOrderStatusTool struct {
 
 func (t *UpdateOrderStatusTool) Name() string { return "UpdateOrderStatus" }
 func (t *UpdateOrderStatusTool) Description() string {
-	return "Updates the status of an order."
+	return "Updates the status of an order. Valid statuses are: PROCESSED & CANCELLED."
 }
 func (t *UpdateOrderStatusTool) StatusMessage() string { return "Updating order status..." }
 func (t *UpdateOrderStatusTool) OpenAI() []openai.ChatCompletionToolParam {
@@ -140,7 +166,15 @@ func (t *UpdateOrderStatusTool) Execute(ctx context.Context, args map[string]int
 	t.db.mu.Lock()
 	defer t.db.mu.Unlock()
 	t.db.orderStatus[orderID] = status
-	return fmt.Sprintf("Order %s status updated to %s", orderID, status), nil
+	resp := struct {
+		OrderID string `json:"orderId"`
+		Status  string `json:"status"`
+	}{OrderID: orderID, Status: status}
+	jsonBytes, err := json.Marshal(resp)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal status update: %w", err)
+	}
+	return string(jsonBytes), nil
 }
 
 // --- InventoryManagementSkill Tools ---
@@ -181,11 +215,16 @@ func (t *CheckStockTool) Execute(ctx context.Context, args map[string]interface{
 	itemID := args["itemID"].(string)
 	t.db.mu.Lock()
 	defer t.db.mu.Unlock()
-	stock, ok := t.db.inventory[itemID]
+	invItem, ok := t.db.inventory[itemID]
 	if !ok {
 		return "", fmt.Errorf("item %s not found in inventory", itemID)
 	}
-	return fmt.Sprintf("Item %s has %d units in stock.", itemID, stock), nil
+	// Return a structured payload with both the item name and the current stock level.
+	jsonBytes, err := json.Marshal(invItem)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal inventory item: %w", err)
+	}
+	return string(jsonBytes), nil
 }
 
 type UpdateStockTool struct {
@@ -229,11 +268,21 @@ func (t *UpdateStockTool) Execute(ctx context.Context, args map[string]interface
 	quantity := int(args["quantity"].(float64))
 	t.db.mu.Lock()
 	defer t.db.mu.Unlock()
-	if _, ok := t.db.inventory[itemID]; !ok {
+	invItem, ok := t.db.inventory[itemID]
+	if !ok {
 		return "", fmt.Errorf("item %s not found in inventory", itemID)
 	}
-	t.db.inventory[itemID] += quantity
-	return fmt.Sprintf("Stock for item %s updated by %d.", itemID, quantity), nil
+	invItem.StoreCount += quantity
+	resp := struct {
+		ItemID        string `json:"itemId"`
+		ItemName      string `json:"itemName"`
+		NewStoreCount int    `json:"newStoreCount"`
+	}{ItemID: invItem.ItemID, ItemName: invItem.ItemName, NewStoreCount: invItem.StoreCount}
+	jsonBytes, err := json.Marshal(resp)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal update response: %w", err)
+	}
+	return string(jsonBytes), nil
 }
 
 func TestECommerceOrderFulfillment(t *testing.T) {
@@ -245,7 +294,7 @@ func TestECommerceOrderFulfillment(t *testing.T) {
 	llm := agentpod.NewLLM(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"azure/o3-mini",
+		"azure/o1",
 		"azure/gpt-4o-mini",
 	)
 
@@ -253,9 +302,9 @@ func TestECommerceOrderFulfillment(t *testing.T) {
 	mem := &MockMemory{RetrieveFn: getDefaultMemory}
 
 	orderSkill := agentpod.Skill{
-		Name:         "OrderManagementSkill",
-		Description:  "Manages customer orders, including retrieving order and item details and updating status.",
-		SystemPrompt: "You are an order management specialist.",
+		Name:            "OrderManagementSkill",
+		ToolDescription: "Manages customer orders, including retrieving order and item details and updating status. If you need to know the details of the items in the order, or you need to place the order and change the status, this is the tool you should use.",
+		SystemPrompt:    "You are an order management specialist.",
 		Tools: []agentpod.Tool{
 			&GetOrderDetailsTool{db: db},
 			&UpdateOrderStatusTool{db: db},
@@ -263,16 +312,29 @@ func TestECommerceOrderFulfillment(t *testing.T) {
 	}
 
 	inventorySkill := agentpod.Skill{
-		Name:         "InventoryManagementSkill",
-		Description:  "Manages warehouse inventory, including checking and updating stock levels. You are dependent on the Item ID to do any operations on the inventory",
-		SystemPrompt: "You are an inventory management specialist. You are dependent on the Item ID to do any operations on the inventory",
+		Name:            "InventoryManagementSkill",
+		ToolDescription: "Manages warehouse inventory, including checking and updating stock levels. You are dependent on the Item ID to do any operations on the inventory.",
+		SystemPrompt:    "You are an inventory management specialist. You are dependent on the Item ID to do any operations on the inventory. If Item ID is not available, you should return an error message to the user. You can't process orders, you can only check and update the stock.",
 		Tools: []agentpod.Tool{
 			&CheckStockTool{db: db},
 			&UpdateStockTool{db: db},
 		},
 	}
+	agentPrompt := `You are an e-commerce order fulfillment agent. Your task is to process incoming orders by interacting only with the tools provided to you. Do not ask the user any questions.
 
-	agent := agentpod.NewAgent("You are an e-commerce order fulfillment agent. Your goal is to process new orders by checking and updating inventory, and then updating the order status. All the information you need to perform the tasks are available from the tools you have. Do not ask any questions to the user. If you don't know what to do or done with the execution, call stop tool.", []agentpod.Skill{orderSkill, inventorySkill})
+For each order:
+  1. Check inventory for all items in the order.
+  2. If all items are in stock:
+    - Deduct the ordered quantity from inventory.
+    - Update the order status to “fulfilled”.
+  3. If any item is out of stock:
+    - Do not modify the inventory.
+    - Do not update the order status.
+    - Return an error message stating which items are insufficient in stock.
+
+Always ensure inventory is validated before processing any order. You must only use tool outputs to make decisions.`
+
+	agent := agentpod.NewAgent(agentPrompt, []agentpod.Skill{orderSkill, inventorySkill})
 
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, agentpod.ContextKey("customerID"), GenerateNewTestID())
@@ -297,11 +359,11 @@ endLoop:
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	if db.inventory["item-abc"] != 8 {
-		t.Errorf("Expected inventory for item-abc to be 8, got %d", db.inventory["item-abc"])
+	if db.inventory["item-abc"].StoreCount != 8 {
+		t.Errorf("Expected inventory for item-abc to be 8, got %d", db.inventory["item-abc"].StoreCount)
 	}
-	if db.inventory["item-def"] != 4 {
-		t.Errorf("Expected inventory for item-def to be 4, got %d", db.inventory["item-def"])
+	if db.inventory["item-def"].StoreCount != 4 {
+		t.Errorf("Expected inventory for item-def to be 4, got %d", db.inventory["item-def"].StoreCount)
 	}
 	if db.orderStatus["order-123"] != "PROCESSED" {
 		t.Errorf("Expected order status for order-123 to be 'PROCESSED', got '%s'", db.orderStatus["order-123"])

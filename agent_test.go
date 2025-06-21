@@ -49,8 +49,8 @@ func TestSkillValidationSystemPrompt(t *testing.T) {
 	}()
 
 	skill := Skill{
-		Name:        "TestSkill",
-		Description: "Test description",
+		Name:            "TestSkill",
+		ToolDescription: "Test description",
 		// SystemPrompt intentionally missing
 	}
 	_ = NewAgent("Test prompt", []Skill{skill})

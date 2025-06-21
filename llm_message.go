@@ -41,8 +41,13 @@ func (ml *MessageList) Add(msgs ...openai.ChatCompletionMessageParamUnion) {
 	ml.Messages = append(ml.Messages, msgs...)
 }
 
-func (ml *MessageList) AddFirst(prompt string) {
-	ml.Messages = append([]openai.ChatCompletionMessageParamUnion{DeveloperMessage(prompt)}, ml.Messages...)
+// AddFirstDeveloperMessage prepends a developer message to the message list.
+// It panics if the provided message is not a developer message.
+func (ml *MessageList) AddFirstDeveloperMessage(msg openai.ChatCompletionMessageParamUnion) {
+	if msg.OfDeveloper == nil {
+		panic("AddFirstDeveloperMessage expects a DeveloperMessage")
+	}
+	ml.Messages = append([]openai.ChatCompletionMessageParamUnion{msg}, ml.Messages...)
 }
 
 func (ml *MessageList) ReplaceAt(index int, newMsg openai.ChatCompletionMessageParamUnion) error {
@@ -57,10 +62,18 @@ func (ml *MessageList) All() []openai.ChatCompletionMessageParamUnion {
 	return ml.Messages
 }
 
-func (ml *MessageList) Clone() *MessageList {
-	return &MessageList{
-		Messages: append([]openai.ChatCompletionMessageParamUnion{}, ml.Messages...),
+// CloneWithoutDeveloperMessages returns a copy of the MessageList that
+// excludes any developer or system messages, preserving the original order of
+// the remaining messages. This is useful when sending conversation history
+// back to the LLM, where developer/system prompts should not be repeated.
+func (ml *MessageList) CloneWithoutDeveloperMessages() *MessageList {
+	filtered := make([]openai.ChatCompletionMessageParamUnion, 0, len(ml.Messages))
+	for _, msg := range ml.Messages {
+		if msg.OfDeveloper == nil && msg.OfSystem == nil {
+			filtered = append(filtered, msg)
+		}
 	}
+	return &MessageList{Messages: filtered}
 }
 
 func (ml *MessageList) Clear() {

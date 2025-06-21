@@ -18,16 +18,16 @@ const maxAgentLoops = 25
 
 // Agent orchestrates calls to the LLM, uses Skills/Tools, and determines how to respond.
 type Agent struct {
-	prompt string
-	skills []Skill
-	logger *slog.Logger
+	systemPrompt string
+	skills       []Skill
+	logger       *slog.Logger
 }
 
 // NewAgent creates an Agent by adding the prompt as a DeveloperMessage.
 func NewAgent(prompt string, skills []Skill) *Agent {
 	// Validate that all skills have both Description and SystemPrompt set
 	for _, skill := range skills {
-		if skill.Description == "" {
+		if skill.ToolDescription == "" {
 			panic(fmt.Sprintf("skill '%s' is missing a Description", skill.Name))
 		}
 		if skill.SystemPrompt == "" {
@@ -36,9 +36,9 @@ func NewAgent(prompt string, skills []Skill) *Agent {
 	}
 
 	return &Agent{
-		prompt: prompt,
-		skills: skills,
-		logger: slog.Default(),
+		systemPrompt: prompt,
+		skills:       skills,
+		logger:       slog.Default(),
 	}
 }
 
@@ -87,7 +87,7 @@ func (a *Agent) ConvertSkillsToTools() []openai.ChatCompletionToolParam {
 		tools = append(tools, openai.ChatCompletionToolParam{
 			Function: openai.FunctionDefinitionParam{
 				Name:        skill.Name,
-				Description: param.Opt[string]{Value: skill.Description},
+				Description: param.Opt[string]{Value: skill.ToolDescription},
 				Parameters: openai.FunctionParameters{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -112,7 +112,7 @@ func (a *Agent) decideNextAction(ctx context.Context, llm LLM, clonedMessages *M
 	}
 
 	systemPromptData := prompts.SkillSelectionPromptData{
-		MainAgentSystemPrompt: a.prompt,
+		MainAgentSystemPrompt: a.systemPrompt,
 		MemoryBlocks:          memoryBlock.Parse(),
 		SkillFunctions:        skillFunctions,
 	}
@@ -122,16 +122,15 @@ func (a *Agent) decideNextAction(ctx context.Context, llm LLM, clonedMessages *M
 		return nil, err
 	}
 
-	clonedMessages.AddFirst(systemPrompt)
+	clonedMessages.AddFirstDeveloperMessage(DeveloperMessage(systemPrompt))
 
 	tools := []openai.ChatCompletionToolParam{}
 	if len(a.ConvertSkillsToTools()) > 0 {
 		tools = append([]openai.ChatCompletionToolParam{a.StopTool()}, a.ConvertSkillsToTools()...)
 	}
-	// TODO make it strict to call the tool when the openai sdk supports passing the option 'required'
 	params := openai.ChatCompletionNewParams{
 		Messages:   clonedMessages.All(),
-		Model:      llm.CheapModel(),
+		Model:      llm.StrongModel(),
 		ToolChoice: openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: param.Opt[string]{Value: "required"}},
 		Tools:      tools,
 	}
@@ -228,7 +227,8 @@ func (a *Agent) Run(ctx context.Context, llm LLM, messageHistory *MessageList, m
 			}
 			return
 		}
-		completion, err := a.decideNextAction(ctx, llm, messageHistory.Clone(), memoryBlock)
+		a.logger.Info("Deciding next action", "loop", i)
+		completion, err := a.decideNextAction(ctx, llm, messageHistory.CloneWithoutDeveloperMessages(), memoryBlock)
 		if err != nil {
 			a.handleLLMError(err, outUserChannel)
 			return
@@ -250,7 +250,7 @@ func (a *Agent) Run(ctx context.Context, llm LLM, messageHistory *MessageList, m
 					var args map[string]interface{}
 					if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err == nil {
 						if resp, ok := args["response"].(string); ok {
-							a.logger.Info("Stop tool called with response. We don't respond this to the caller from here though", "response", resp)
+							a.logger.Info("Stop tool called with response. ", "response", resp)
 						}
 					}
 				}
@@ -275,7 +275,7 @@ func (a *Agent) Run(ctx context.Context, llm LLM, messageHistory *MessageList, m
 			go func(skill *Skill, tool openai.ChatCompletionMessageToolCall) {
 				defer wg.Done()
 				// Clone the messages again so all goroutines get different message history
-				result, err := a.SkillContextRunner(ctx, messageHistory.Clone(), llm, memoryBlock, skill, tool)
+				result, err := a.SkillContextRunner(ctx, messageHistory.CloneWithoutDeveloperMessages(), llm, memoryBlock, skill, tool)
 				if err != nil {
 					a.logger.Error("Error running skill", "error", err)
 					return
