@@ -30,12 +30,19 @@ func (m *MockMemory) Retrieve(ctx context.Context) (*agentpod.MemoryBlock, error
 // Default memory retrieval function that includes basic user data
 func getDefaultMemory(ctx context.Context) (*agentpod.MemoryBlock, error) {
 	memoryBlock := agentpod.NewMemoryBlock()
-	if userID, ok := ctx.Value(agentpod.ContextKey("extra")).(map[string]string)["user_id"]; ok {
-		memoryBlock.AddString("user_id", userID)
+
+	// Safely extract the "extra" map from the context and then the "user_id" value.
+	if extraVal, ok := ctx.Value(agentpod.ContextKey("extra")).(map[string]string); ok {
+		if userID, ok := extraVal["user_id"]; ok {
+			memoryBlock.AddString("user_id", userID)
+		}
 	}
-	if sessionID, ok := ctx.Value(agentpod.ContextKey("sessionID")).(string); ok {
-		memoryBlock.AddString("session_id", sessionID)
+
+	// Safely extract the session ID from the context.
+	if sessionVal, ok := ctx.Value(agentpod.ContextKey("sessionID")).(string); ok {
+		memoryBlock.AddString("session_id", sessionVal)
 	}
+
 	return memoryBlock, nil
 }
 
@@ -98,7 +105,7 @@ func TestSkillWithMemory(t *testing.T) {
 		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
 	}
 
-	llm := agentpod.NewLLM(
+	llm := agentpod.NewKeywordsAIClient(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
 		"azure/o3-mini",

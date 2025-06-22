@@ -17,7 +17,7 @@ func TestNewResponseWithWebSearchTool(t *testing.T) {
 	}
 
 	// Create a new LLM client with Keywords AI configuration
-	llm := agentpod.NewLLM(
+	llm := agentpod.NewKeywordsAIClient(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
 		"azure/o3-mini",

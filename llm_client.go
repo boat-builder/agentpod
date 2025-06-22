@@ -124,9 +124,3 @@ func GenerateSchema[T any]() interface{} {
 
 // Ensure KeywordsAIClient satisfies the LLM interface.
 var _ LLM = (*KeywordsAIClient)(nil)
-
-// NewLLM is a convenience wrapper maintained to avoid widespread signature
-// changes across the codebase. It simply delegates to NewKeywordsAIClient.
-func NewLLM(apiKey string, baseURL string, strongModel string, cheapModel string) *KeywordsAIClient {
-	return NewKeywordsAIClient(apiKey, baseURL, strongModel, cheapModel)
-}

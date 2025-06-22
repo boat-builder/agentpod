@@ -16,7 +16,7 @@ func TestSkillValidation(t *testing.T) {
 		if !ok {
 			t.Fatalf("Unexpected panic type: %T", r)
 		}
-		if !strings.Contains(msg, "missing a Description") {
+		if !strings.Contains(msg, "missing a Tool Description") {
 			t.Fatalf("Unexpected panic message: %s", msg)
 		}
 	}()

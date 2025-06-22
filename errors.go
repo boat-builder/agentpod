@@ -12,6 +12,7 @@ import (
 var (
 	ErrSessionClosed = errors.New("session has been closed")
 	ErrNoMessage     = errors.New("no message available")
+	ErrNoSessionID   = errors.New("session ID not found in context or is not a string")
 )
 
 // RetryableError is the custom type for errors that can be retried.

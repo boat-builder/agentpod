@@ -74,7 +74,13 @@ func (s *InMemoryStorage) GetConversations(ctx context.Context, limit int, offse
 func (s *InMemoryStorage) AddUserMessage(ctx context.Context, userMessage string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sessionID := ctx.Value(ContextKey("sessionID")).(string)
+	rawSessionID := ctx.Value(ContextKey("sessionID"))
+
+	// Safely extract the sessionID from the context to avoid panics.
+	sessionID, ok := rawSessionID.(string)
+	if !ok || sessionID == "" {
+		return ErrNoSessionID
+	}
 
 	// Check if conversation already exists
 	for _, conv := range s.conversations {
@@ -97,7 +103,13 @@ func (s *InMemoryStorage) AddUserMessage(ctx context.Context, userMessage string
 func (s *InMemoryStorage) AddAssistantMessage(ctx context.Context, assistantMessage string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sessionID := ctx.Value(ContextKey("sessionID")).(string)
+	rawSessionID := ctx.Value(ContextKey("sessionID"))
+
+	// Safely extract the sessionID from the context to avoid panics.
+	sessionID, ok := rawSessionID.(string)
+	if !ok || sessionID == "" {
+		return ErrNoSessionID
+	}
 
 	// Find the conversation and add the assistant message
 	for _, conv := range s.conversations {

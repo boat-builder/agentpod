@@ -291,7 +291,7 @@ func TestECommerceOrderFulfillment(t *testing.T) {
 		t.Skip("Skipping test: KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
 	}
 
-	llm := agentpod.NewLLM(
+	llm := agentpod.NewKeywordsAIClient(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
 		"azure/o1",
