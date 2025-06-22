@@ -1,7 +1,9 @@
 package agentpod
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -125,5 +127,49 @@ func TestMemoryBlock_Parse(t *testing.T) {
 
 	if parsed != expected {
 		t.Errorf("Parse output doesn't match expected.\nGot:\n%s\nExpected:\n%s", parsed, expected)
+	}
+}
+
+func TestMemoryBlock_ConcurrentAccess(t *testing.T) {
+	mb := NewMemoryBlock()
+	var wg sync.WaitGroup
+	const numGoroutines = 100
+
+	// Concurrent writes
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			key := fmt.Sprintf("key-%d", i)
+			value := fmt.Sprintf("value-%d", i)
+			if i%2 == 0 {
+				mb.AddString(key, value)
+			} else {
+				block := NewMemoryBlock()
+				block.AddString("innerKey", "innerValue")
+				mb.AddBlock(key, block)
+			}
+		}(i)
+	}
+
+	wg.Wait() // Allow writes to complete before concurrent reads
+
+	// Concurrent reads
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_ = mb.Parse() // We just want to ensure this doesn't race
+			mb.Exists(fmt.Sprintf("key-%d", i))
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Final state check - we expect 100 items to have been added.
+	mb.mu.RLock()
+	defer mb.mu.RUnlock()
+	if len(mb.keys) != numGoroutines {
+		t.Errorf("Expected %d items in memory block after concurrent access, but got %d", numGoroutines, len(mb.keys))
 	}
 }

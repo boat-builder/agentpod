@@ -12,10 +12,10 @@ import (
 
 // Skill holds a set of tools and a domain-specific prompt/description.
 type Skill struct {
-	Name         string
-	Description  string
-	SystemPrompt string
-	Tools        []Tool
+	Name            string
+	ToolDescription string // used as the tool description when the skill is presented as a tool
+	SystemPrompt    string // used as the system prompt when the skill is running as an Agent
+	Tools           []Tool
 }
 
 func (s *Skill) GetTools() []openai.ChatCompletionToolParam {

@@ -17,13 +17,11 @@ func TestNewResponseWithWebSearchTool(t *testing.T) {
 	}
 
 	// Create a new LLM client with Keywords AI configuration
-	llm := agentpod.NewLLM(
+	llm := agentpod.NewKeywordsAIClient(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"o3-mini",
-		"gpt-4o-mini",
-		"o3-mini",
-		"gpt-4o-mini",
+		"azure/o3-mini",
+		"azure/gpt-4o-mini",
 	)
 
 	// Create a context with metadata
@@ -42,7 +40,7 @@ func TestNewResponseWithWebSearchTool(t *testing.T) {
 		},
 		Tools: []responses.ToolUnionParam{
 			{
-				OfWebSearch: &responses.WebSearchToolParam{
+				OfWebSearchPreview: &responses.WebSearchToolParam{
 					Type: responses.WebSearchToolTypeWebSearchPreview,
 				},
 			},

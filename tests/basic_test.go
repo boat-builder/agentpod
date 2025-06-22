@@ -2,7 +2,9 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/boat-builder/agentpod"
@@ -12,13 +14,13 @@ import (
 
 // MockMemory implements the Memory interface for testing
 type MockMemory struct {
-	RetrieveFn func(*agentpod.Meta) (*agentpod.MemoryBlock, error)
+	RetrieveFn func(ctx context.Context) (*agentpod.MemoryBlock, error)
 }
 
 // Retrieve returns a memory block for testing
-func (m *MockMemory) Retrieve(meta *agentpod.Meta) (*agentpod.MemoryBlock, error) {
+func (m *MockMemory) Retrieve(ctx context.Context) (*agentpod.MemoryBlock, error) {
 	if m.RetrieveFn != nil {
-		return m.RetrieveFn(meta)
+		return m.RetrieveFn(ctx)
 	}
 	// Default implementation returns an empty memory block
 	memoryBlock := agentpod.NewMemoryBlock()
@@ -26,321 +28,26 @@ func (m *MockMemory) Retrieve(meta *agentpod.Meta) (*agentpod.MemoryBlock, error
 }
 
 // Default memory retrieval function that includes basic user data
-func getDefaultMemory(meta *agentpod.Meta) (*agentpod.MemoryBlock, error) {
+func getDefaultMemory(ctx context.Context) (*agentpod.MemoryBlock, error) {
 	memoryBlock := agentpod.NewMemoryBlock()
-	memoryBlock.AddString("user_id", meta.Extra["user_id"])
-	memoryBlock.AddString("session_id", meta.SessionID)
+
+	// Safely extract the "extra" map from the context and then the "user_id" value.
+	if extraVal, ok := ctx.Value(agentpod.ContextKey("extra")).(map[string]string); ok {
+		if userID, ok := extraVal["user_id"]; ok {
+			memoryBlock.AddString("user_id", userID)
+		}
+	}
+
+	// Safely extract the session ID from the context.
+	if sessionVal, ok := ctx.Value(agentpod.ContextKey("sessionID")).(string); ok {
+		memoryBlock.AddString("session_id", sessionVal)
+	}
+
 	return memoryBlock, nil
 }
 
-type BestAppleFinder struct {
-	toolName    string
-	description string
-}
-
-func (b *BestAppleFinder) Name() string {
-	return b.toolName
-}
-
-func (b *BestAppleFinder) Description() string {
-	return b.description
-}
-
-func (b *BestAppleFinder) StatusMessage() string {
-	return "Finding the best apple"
-}
-
-func (b *BestAppleFinder) OpenAI() []openai.ChatCompletionToolParam {
-	return []openai.ChatCompletionToolParam{
-		{
-			Function: openai.FunctionDefinitionParam{
-				Name:        b.toolName,
-				Description: param.Opt[string]{Value: b.description},
-				Parameters: openai.FunctionParameters{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_query": map[string]interface{}{
-							"type":        "string",
-							"description": "Query from the user",
-						},
-					},
-					"required": []string{"user_query"},
-				},
-			},
-		},
-	}
-}
-
-func (b *BestAppleFinder) Execute(ctx context.Context, meta agentpod.Meta, args map[string]interface{}) (string, error) {
-	return "green apple", nil
-}
-
-// MockStorage implements the Storage interface for testing
-type MockStorage struct {
-	ConversationFn  func(agentpod.Meta, int, int) (*agentpod.MessageList, error)
-	CreateMessageFn func(meta agentpod.Meta, userMessage string) error
-	userMessages    map[string]string // Maps sessionID to userMessage
-	wasCalled       map[string]bool   // Tracks if methods were called
-}
-
-// GetConversations returns the conversation history
-func (m *MockStorage) GetConversations(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
-	return m.ConversationFn(meta, limit, offset)
-}
-
-// CreateConversation records the user message
-func (m *MockStorage) CreateConversation(meta agentpod.Meta, userMessage string) error {
-	if m.userMessages == nil {
-		m.userMessages = make(map[string]string)
-	}
-	if m.wasCalled == nil {
-		m.wasCalled = make(map[string]bool)
-	}
-
-	m.userMessages[meta.SessionID] = userMessage
-	m.wasCalled["CreateConversation"] = true
-
-	if m.CreateMessageFn != nil {
-		return m.CreateMessageFn(meta, userMessage)
-	}
-	return nil
-}
-
-func (m *MockStorage) WasCreateConversationCalled() bool {
-	if m.wasCalled == nil {
-		return false
-	}
-	return m.wasCalled["CreateConversation"]
-}
-
-func (m *MockStorage) GetUserMessage(sessionID string) string {
-	if m.userMessages == nil {
-		return ""
-	}
-	return m.userMessages[sessionID]
-}
-
-func (m *MockStorage) FinishConversation(meta agentpod.Meta, assistantMessage string) error {
-	return nil
-}
-
-// Default empty conversation history function that includes the user message if available
-func getEmptyConversationHistory(s *MockStorage) func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
-	return func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
-		messages := agentpod.MessageList{}
-
-		// If CreateConversation was called, include that message
-		if userMsg := s.GetUserMessage(meta.SessionID); userMsg != "" {
-			messages.Add(agentpod.UserMessage(userMsg))
-		}
-
-		return &messages, nil
-	}
-}
-
-func TestSimpleConversation(t *testing.T) {
-	config := LoadConfig()
-	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
-		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
-	}
-
-	llm := agentpod.NewLLM(
-		config.KeywordsAIAPIKey,
-		config.KeywordsAIEndpoint,
-		"azure/o3-mini",
-		"azure/gpt-4o-mini",
-		"azure/o3-mini",
-		"azure/gpt-4o-mini",
-	)
-	mem := &MockMemory{}
-	ai := agentpod.NewAgent("Your a repeater. You'll repeat after whatever the user says exactly as they say it, even the punctuation and cases.", []agentpod.Skill{})
-
-	// Create a mock storage with empty conversation history
-	storage := &MockStorage{}
-	storage.ConversationFn = getEmptyConversationHistory(storage)
-
-	orgID := GenerateNewTestID()
-	sessionID := GenerateNewTestID()
-	userID := GenerateNewTestID()
-
-	convSession := agentpod.NewSession(context.Background(), llm, mem, ai, storage, agentpod.Meta{
-		CustomerID: orgID,
-		SessionID:  sessionID,
-		Extra:      map[string]string{"user_id": userID},
-	})
-	convSession.In("test confirmed")
-
-	var finalContent string
-	for {
-		out := convSession.Out()
-		if out.Type == agentpod.ResponseTypePartialText {
-			finalContent += out.Content
-		}
-		if out.Type == agentpod.ResponseTypeEnd {
-			break
-		}
-	}
-
-	if finalContent != "test confirmed" {
-		t.Fatal("Expected 'test confirmed', got:", finalContent)
-	}
-
-	// Verify CreateConversation was called with the correct message
-	if !storage.WasCreateConversationCalled() {
-		t.Fatal("Expected CreateConversation to be called")
-	}
-	if storage.GetUserMessage(sessionID) != "test confirmed" {
-		t.Fatalf("Expected user message to be 'test confirmed', got: %s", storage.GetUserMessage(sessionID))
-	}
-}
-
-func TestConversationWithSkills(t *testing.T) {
-	config := LoadConfig()
-	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
-		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
-	}
-
-	llm := agentpod.NewLLM(
-		config.KeywordsAIAPIKey,
-		config.KeywordsAIEndpoint,
-		"azure/o3-mini",
-		"azure/gpt-4o-mini",
-		"azure/o3-mini",
-		"azure/gpt-4o-mini",
-	)
-	mem := &MockMemory{
-		RetrieveFn: getDefaultMemory,
-	}
-	skill := agentpod.Skill{
-		Name:         "AppleExpert",
-		Description:  "You are an expert in apples",
-		SystemPrompt: "As an apple expert, you provide detailed information about different apple varieties and their characteristics.",
-		Tools: []agentpod.Tool{
-			&BestAppleFinder{
-				toolName:    "BestAppleFinder",
-				description: "Find the best apple",
-			},
-		},
-	}
-	agent := agentpod.NewAgent("You are a good farmer. You answer user questions briefly and concisely. You do not add any extra information but just answer user questions in fewer words possible.", []agentpod.Skill{skill})
-
-	// Create a mock storage with empty conversation history
-	storage := &MockStorage{}
-	storage.ConversationFn = getEmptyConversationHistory(storage)
-
-	orgID := GenerateNewTestID()
-	sessionID := GenerateNewTestID()
-	userID := GenerateNewTestID()
-	convSession := agentpod.NewSession(context.Background(), llm, mem, agent, storage, agentpod.Meta{
-		CustomerID: orgID,
-		SessionID:  sessionID,
-		Extra:      map[string]string{"user_id": userID},
-	})
-
-	convSession.In("Which apple is the best?")
-	var finalContent string
-	for {
-		out := convSession.Out()
-		if out.Type == agentpod.ResponseTypePartialText {
-			finalContent += out.Content
-		}
-		if out.Type == agentpod.ResponseTypeEnd {
-			break
-		}
-	}
-	if !strings.Contains(strings.ToLower(finalContent), "green apple") {
-		t.Fatal("Expected 'green apple' to be in the final content, got:", finalContent)
-	}
-
-	// Verify CreateConversation was called with the correct message
-	if !storage.WasCreateConversationCalled() {
-		t.Fatal("Expected CreateConversation to be called")
-	}
-	if storage.GetUserMessage(sessionID) != "Which apple is the best?" {
-		t.Fatalf("Expected user message to be 'Which apple is the best?', got: %s", storage.GetUserMessage(sessionID))
-	}
-}
-
-// Function for non-empty conversation history
-func getNonEmptyConversationHistory(s *MockStorage) func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
-	return func(meta agentpod.Meta, limit int, offset int) (*agentpod.MessageList, error) {
-		messages := agentpod.MessageList{}
-
-		// Add pre-existing conversation history
-		messages.Add(
-			agentpod.UserMessage("Can you tell me which color is apple?"),
-			agentpod.AssistantMessage("The apple is generally red"),
-		)
-
-		// If CreateConversation was called, include that new message as well
-		if userMsg := s.GetUserMessage(meta.SessionID); userMsg != "" {
-			messages.Add(agentpod.UserMessage(userMsg))
-		}
-
-		return &messages, nil
-	}
-}
-
-func TestConversationWithHistory(t *testing.T) {
-	config := LoadConfig()
-	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
-		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
-	}
-
-	llm := agentpod.NewLLM(
-		config.KeywordsAIAPIKey,
-		config.KeywordsAIEndpoint,
-		"azure/o3-mini",
-		"azure/gpt-4o-mini",
-		"azure/o3-mini",
-		"azure/gpt-4o-mini",
-	)
-	mem := &MockMemory{
-		RetrieveFn: getDefaultMemory,
-	}
-	ai := agentpod.NewAgent("You are an assistant!", []agentpod.Skill{})
-
-	// Create a mock storage with non-empty conversation history
-	storage := &MockStorage{}
-	storage.ConversationFn = getNonEmptyConversationHistory(storage)
-
-	orgID := GenerateNewTestID()
-	sessionID := GenerateNewTestID()
-	userID := GenerateNewTestID()
-	convSession := agentpod.NewSession(context.Background(), llm, mem, ai, storage, agentpod.Meta{
-		CustomerID: orgID,
-		SessionID:  sessionID,
-		Extra:      map[string]string{"user_id": userID},
-	})
-
-	convSession.In("is it a fruit or a vegetable? Answer in one word without extra punctuation.")
-
-	var finalContent string
-	for {
-		out := convSession.Out()
-		if out.Type == agentpod.ResponseTypePartialText {
-			finalContent += out.Content
-		}
-		if out.Type == agentpod.ResponseTypeEnd {
-			break
-		}
-	}
-
-	if strings.ToLower(finalContent) != "fruit" {
-		t.Fatal("Expected 'fruit', got:", finalContent)
-	}
-
-	// Verify CreateConversation was called with the correct message
-	if !storage.WasCreateConversationCalled() {
-		t.Fatal("Expected CreateConversation to be called")
-	}
-	if storage.GetUserMessage(sessionID) != "is it a fruit or a vegetable? Answer in one word without extra punctuation." {
-		t.Fatalf("Expected user message to match, got: %s", storage.GetUserMessage(sessionID))
-	}
-}
-
 // Function to create memory with country information
-func getCountryMemory(meta *agentpod.Meta) (*agentpod.MemoryBlock, error) {
+func getCountryMemory(ctx context.Context) (*agentpod.MemoryBlock, error) {
 	memoryBlock := agentpod.NewMemoryBlock()
 	userDetailsBlock := agentpod.NewMemoryBlock()
 	userDetailsBlock.AddString("country", "United Kingdom")
@@ -348,17 +55,59 @@ func getCountryMemory(meta *agentpod.Meta) (*agentpod.MemoryBlock, error) {
 	return memoryBlock, nil
 }
 
-func TestMemoryRetrieval(t *testing.T) {
+// PopulationTool is a mock tool for testing purposes.
+type PopulationTool struct {
+	mu         sync.Mutex
+	WasCalled  bool
+	CountryArg string
+}
+
+func (t *PopulationTool) Name() string { return "get_country_population" }
+func (t *PopulationTool) Description() string {
+	return "Gets the population for a given country."
+}
+
+func (t *PopulationTool) OpenAI() []openai.ChatCompletionToolParam {
+	return []openai.ChatCompletionToolParam{
+		{
+			Function: openai.FunctionDefinitionParam{
+				Name:        t.Name(),
+				Description: param.Opt[string]{Value: t.Description()},
+				Parameters: openai.FunctionParameters{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"country": map[string]interface{}{
+							"type":        "string",
+							"description": "The country to get the population for.",
+						},
+					},
+					"required": []string{"country"},
+				},
+			},
+		},
+	}
+}
+
+func (t *PopulationTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if country, ok := args["country"].(string); ok {
+		t.WasCalled = true
+		t.CountryArg = country
+		return "The population is 50 million", nil
+	}
+	return "", fmt.Errorf("country argument is missing or not a string")
+}
+
+func TestSkillWithMemory(t *testing.T) {
 	config := LoadConfig()
 	if config.KeywordsAIAPIKey == "" || config.KeywordsAIEndpoint == "" {
 		t.Fatal("KeywordsAIAPIKey or KeywordsAIEndpoint is not set")
 	}
 
-	llm := agentpod.NewLLM(
+	llm := agentpod.NewKeywordsAIClient(
 		config.KeywordsAIAPIKey,
 		config.KeywordsAIEndpoint,
-		"azure/o3-mini",
-		"azure/gpt-4o-mini",
 		"azure/o3-mini",
 		"azure/gpt-4o-mini",
 	)
@@ -368,44 +117,39 @@ func TestMemoryRetrieval(t *testing.T) {
 		RetrieveFn: getCountryMemory,
 	}
 
-	ai := agentpod.NewAgent("You are a helpful assistant. Answer questions based on the user's information.", []agentpod.Skill{})
+	populationTool := &PopulationTool{}
 
-	// Create a mock storage with empty conversation history
-	storage := &MockStorage{}
-	storage.ConversationFn = getEmptyConversationHistory(storage)
+	censusSkill := agentpod.Skill{
+		Name:            "CensusSkill",
+		ToolDescription: "This skill can provide population data for different countries.",
+		SystemPrompt:    "You are a census expert. You can provide population data.",
+		Tools:           []agentpod.Tool{populationTool},
+	}
 
-	orgID := GenerateNewTestID()
-	sessionID := GenerateNewTestID()
-	userID := GenerateNewTestID()
+	ai := agentpod.NewAgent("You are a helpful assistant.", []agentpod.Skill{censusSkill})
 
-	convSession := agentpod.NewSession(context.Background(), llm, mem, ai, storage, agentpod.Meta{
-		CustomerID: orgID,
-		SessionID:  sessionID,
-		Extra:      map[string]string{"user_id": userID},
-	})
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, agentpod.ContextKey("customerID"), GenerateNewTestID())
+	ctx = context.WithValue(ctx, agentpod.ContextKey("extra"), map[string]string{"user_id": GenerateNewTestID()})
 
-	convSession.In("Which country am I from?")
+	convSession := agentpod.NewSession(ctx, llm, mem, ai)
 
-	var finalContent string
+	convSession.In("What is the population of my country?")
+
 	for {
 		out := convSession.Out()
-		if out.Type == agentpod.ResponseTypePartialText {
-			finalContent += out.Content
-		}
 		if out.Type == agentpod.ResponseTypeEnd {
 			break
 		}
 	}
 
-	if !strings.Contains(strings.ToLower(finalContent), "united kingdom") {
-		t.Fatal("Expected response to contain 'United Kingdom', got:", finalContent)
+	populationTool.mu.Lock()
+	defer populationTool.mu.Unlock()
+	if !populationTool.WasCalled {
+		t.Fatal("Expected population tool to be called, but it was not.")
 	}
 
-	// Verify CreateConversation was called with the correct message
-	if !storage.WasCreateConversationCalled() {
-		t.Fatal("Expected CreateConversation to be called")
-	}
-	if storage.GetUserMessage(sessionID) != "Which country am I from?" {
-		t.Fatalf("Expected user message to be 'Which country am I from?', got: %s", storage.GetUserMessage(sessionID))
+	if strings.ToLower(populationTool.CountryArg) != "united kingdom" {
+		t.Fatalf("Expected population tool to be called with 'United Kingdom', but got '%s'", populationTool.CountryArg)
 	}
 }

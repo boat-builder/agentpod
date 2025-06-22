@@ -3,17 +3,7 @@ package agentpod
 type ResponseType string
 
 const (
-	ResponseTypeStatus ResponseType = "status"
-
-	ResponseTypeThinkingStart ResponseType = "thinking-start"
-	ResponseTypeThinking      ResponseType = "thinking"
-	ResponseTypeThinkingEnd   ResponseType = "thinking-end"
-
-	ResponseTypePartialText ResponseType = "partial-text"
-	ResponseTypeEnd         ResponseType = "end"
-
-	ResponseTypeInputRequest ResponseType = "input-request"
-
+	ResponseTypeEnd   ResponseType = "end"
 	ResponseTypeError ResponseType = "error"
 )
 
